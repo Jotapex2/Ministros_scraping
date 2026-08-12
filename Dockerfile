@@ -1,5 +1,5 @@
 # Dockerfile para Observatorio Digital del Gobierno con Webscraping Local (Playwright)
-FROM mcr.microsoft.com/playwright/node:20-jammy AS base
+FROM node:20-bookworm
 
 WORKDIR /app
 
@@ -7,13 +7,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-# Instalar navegadores de Playwright con sus dependencias de Linux
+# Instalar navegador Chromium y dependencias de sistema operativo de Linux
 RUN npx playwright install --with-deps chromium
 
 # Copiar el resto del código fuente del proyecto
 COPY . .
 
-# Variables de entorno por defecto para producción
+# Variables de entorno para producción
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
@@ -24,5 +24,5 @@ RUN npm run build
 # Exponer el puerto 3000
 EXPOSE 3000
 
-# Iniciar servidor Next.js
-CMD ["npm", "start"]
+# Detectar modelos de Ollama y luego iniciar Next.js
+CMD ["node", "scripts/start-with-ollama-check.mjs"]

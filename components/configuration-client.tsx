@@ -9,6 +9,7 @@ import { accountRows, downloadCsv, parseAccountCsv } from "@/lib/export/csv";
 import { defaultAccounts } from "@/config/accounts";
 import { clearAccounts } from "@/lib/session/accounts";
 import { ScraperLoginModal } from "./scraper-login-modal";
+import { OllamaModelField } from "./ollama-model-field";
 
 export function ConfigurationClient() {
   const { config, hydrated, hydrate, setConfig, setAccounts } =
@@ -17,7 +18,34 @@ export function ConfigurationClient() {
   const [authStatus, setAuthStatus] = useState<{ x?: boolean; instagram?: boolean }>({});
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginPlatform, setLoginPlatform] = useState<"x" | "instagram">("x");
+  const [ollamaTesting, setOllamaTesting] = useState(false);
+  const [ollamaResult, setOllamaResult] = useState<{ success: boolean; models?: string[]; error?: string } | null>(null);
   const file = useRef<HTMLInputElement>(null);
+
+  const testOllama = async () => {
+    setOllamaTesting(true);
+    setOllamaResult(null);
+    try {
+      const res = await fetch("/api/deepseek", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "test_ollama",
+          ollamaHost: config.ollamaHost || "http://127.0.0.1:11434",
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok && data.data?.models) {
+        setOllamaResult({ success: true, models: data.data.models });
+      } else {
+        setOllamaResult({ success: false, error: data.error || "No se pudo conectar a Ollama." });
+      }
+    } catch (err) {
+      setOllamaResult({ success: false, error: err instanceof Error ? err.message : "Error al conectar." });
+    } finally {
+      setOllamaTesting(false);
+    }
+  };
 
   const checkAuth = async () => {
     try {
@@ -341,6 +369,108 @@ export function ConfigurationClient() {
                   </Button>
                 </div>
               </div>
+            </div>
+          </Card>
+          <Card>
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-bold text-sm">Proveedor de Inteligencia Artificial (LLM)</h3>
+                <p className="kpi-meta">
+                  Usado para análisis cualitativo de sentimiento y detección de temas.
+                </p>
+              </div>
+
+              <div className="field">
+                <label>Proveedor</label>
+                <Select
+                  value={config.llmProvider || "deepseek"}
+                  onChange={(e) => {
+                    const provider = e.target.value as "deepseek" | "ollama";
+                    setConfig({
+                      llmProvider: provider,
+                      ...(provider === "ollama"
+                        ? {
+                            ollamaHost:
+                              config.ollamaHost || "http://127.0.0.1:11434",
+                            ollamaModel: config.ollamaModel || "llama3",
+                          }
+                        : {}),
+                    });
+                  }}
+                >
+                  <option value="deepseek">DeepSeek API (Cloud)</option>
+                  <option value="ollama">Ollama (Modelos Locales)</option>
+                </Select>
+              </div>
+
+              {config.llmProvider === "ollama" && (
+                <>
+                  <div className="field">
+                    <label>URL Host de Ollama</label>
+                    <Input
+                      placeholder="http://127.0.0.1:11434"
+                      value={config.ollamaHost || "http://127.0.0.1:11434"}
+                      onChange={(e) => setConfig({ ollamaHost: e.target.value })}
+                    />
+                    <p className="kpi-meta">
+                      En Docker usar: http://host.docker.internal:11434
+                    </p>
+                  </div>
+
+                  <div className="field">
+                    <label>Modelo Ollama</label>
+                    <OllamaModelField
+                      host={config.ollamaHost}
+                      value={config.ollamaModel}
+                      onChange={(ollamaModel) => setConfig({ ollamaModel })}
+                    />
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={testOllama}
+                    disabled={ollamaTesting}
+                  >
+                    {ollamaTesting ? "Conectando..." : "Probar conexión con Ollama"}
+                  </Button>
+
+                  {ollamaResult && (
+                    <div className="mt-2 text-xs p-2.5 rounded-md bg-neutral-950 border border-neutral-800">
+                      {ollamaResult.success ? (
+                        <div className="text-emerald-400 space-y-2">
+                          <p className="font-bold">✓ Conexión exitosa con Ollama</p>
+                          {ollamaResult.models?.length ? (
+                            <div className="space-y-1">
+                              <p className="text-neutral-400">Haz clic para seleccionar el modelo activo:</p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {ollamaResult.models.map((modelName) => (
+                                  <Button
+                                    key={modelName}
+                                    type="button"
+                                    variant={config.ollamaModel === modelName ? "default" : "outline"}
+                                    style={{ padding: "2px 8px", fontSize: 11 }}
+                                    onClick={() => setConfig({ ollamaModel: modelName })}
+                                  >
+                                    {modelName}
+                                  </Button>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-neutral-400">No se detectaron modelos instalados aún en Ollama (usa `ollama pull llama3`).</p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-red-400">
+                          <p className="font-bold">✗ Error de conexión con Ollama</p>
+                          <p className="text-neutral-400">{ollamaResult.error}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </Card>
         </div>

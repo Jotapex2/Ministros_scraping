@@ -13,8 +13,151 @@ export interface LocalXTweet {
   replyCount?: number;
   retweetCount?: number;
   quoteCount?: number;
+  views?: number;
   url?: string;
   inReplyToId?: string;
+}
+
+type AnyObject = Record<string, unknown>;
+
+function checkXSession(page: any) {
+  const url = page.url();
+  if (url.includes("/login") || url.includes("/flow/login") || url.includes("/account/access")) {
+    throw new Error("La sesión de X (Twitter) expiró o requiere verificación. Por favor haz clic en 'Iniciar Sesión' e ingresa tu cookie auth_token actualizada.");
+  }
+}
+
+function timelineInstructions(json: any): AnyObject[] {
+  const data = json?.data ?? {};
+  const userResult = data.user?.result;
+  const candidates = [
+    userResult?.timeline_v2?.timeline?.instructions,
+    userResult?.timeline?.timeline?.instructions,
+    userResult?.instructions,
+    data.threaded_conversation_with_injections_v2?.instructions,
+    data.search_by_raw_query?.search_timeline?.timeline?.instructions,
+    data.search_by_raw_query?.search_timeline?.instructions,
+    data.search_timeline?.timeline?.instructions,
+    data.search_timeline?.instructions,
+  ];
+  const found = candidates.find(
+    (candidate) => Array.isArray(candidate) && candidate.length > 0,
+  );
+  return (found as AnyObject[] | undefined) ?? [];
+}
+
+function tweetResultsOf(entry: any): AnyObject[] {
+  const content = entry?.content;
+  if (!content) return [];
+  const results: AnyObject[] = [];
+  const direct = content.itemContent?.tweet_results?.result as
+    | AnyObject
+    | undefined;
+  if (direct) results.push(direct);
+  const items = content.items as AnyObject[] | undefined;
+  if (Array.isArray(items)) {
+    for (const item of items) {
+      const nested = (item as any).item?.itemContent?.tweet_results?.result as
+        | AnyObject
+        | undefined;
+      if (nested) results.push(nested);
+    }
+  }
+  return results;
+}
+
+function newUserStats(result: AnyObject | undefined) {
+  if (!result) return undefined;
+  const core = result.core as AnyObject | undefined;
+  if (!core) return undefined;
+  const counts = result.relationship_counts as AnyObject | undefined;
+  return {
+    userName:
+      typeof core.screen_name === "string" ? core.screen_name : undefined,
+    name: typeof core.name === "string" ? core.name : undefined,
+    followersCount:
+      typeof counts?.followers === "number" ? counts.followers : undefined,
+  };
+}
+
+function legacyUserStats(result: AnyObject | undefined) {
+  const legacy = result?.legacy as AnyObject | undefined;
+  if (!legacy) return undefined;
+  return {
+    userName:
+      typeof legacy.screen_name === "string" ? legacy.screen_name : undefined,
+    name: typeof legacy.name === "string" ? legacy.name : undefined,
+    followersCount:
+      typeof legacy.followers_count === "number"
+        ? legacy.followers_count
+        : undefined,
+  };
+}
+
+function extractTweet(
+  result: any,
+  fallbackUsername?: string,
+): LocalXTweet | null {
+  const tweetData = result.tweet ?? result;
+  const legacy = tweetData.legacy as AnyObject | undefined;
+  if (!legacy || !legacy.id_str) return null;
+
+  const userNode =
+    tweetData.core?.user_results?.result ??
+    tweetData.core?.user_results ??
+    tweetData.core;
+  const user = newUserStats(userNode) ?? legacyUserStats(userNode);
+  const userName = user?.userName ?? fallbackUsername ?? "desconocido";
+  const noteText = result.note_tweet?.note_tweet_results?.result?.text as
+    | string
+    | undefined;
+  const viewsRaw = tweetData.views?.count;
+  const views = Number(viewsRaw);
+
+  return {
+    id: String(legacy.id_str),
+    text:
+      (legacy.full_text as string) || (legacy.text as string) || noteText || "",
+    createdAt: new Date(String(legacy.created_at)).toISOString(),
+    author: {
+      userName,
+      name: user?.name ?? userName,
+      followersCount: user?.followersCount,
+    },
+    likeCount:
+      typeof legacy.favorite_count === "number" ? legacy.favorite_count : undefined,
+    replyCount:
+      typeof legacy.reply_count === "number" ? legacy.reply_count : undefined,
+    retweetCount:
+      typeof legacy.retweet_count === "number" ? legacy.retweet_count : undefined,
+    quoteCount:
+      typeof legacy.quote_count === "number" ? legacy.quote_count : undefined,
+    views: Number.isFinite(views) ? views : undefined,
+    url: `https://x.com/${userName || "i"}/status/${legacy.id_str}`,
+    inReplyToId: legacy.in_reply_to_status_id_str as string | undefined,
+  };
+}
+
+function collectTweets(
+  json: any,
+  tweets: LocalXTweet[],
+  fallbackUsername?: string,
+) {
+  if (!json || typeof json !== "object") return;
+  const instructions = timelineInstructions(json);
+  for (const instruction of instructions) {
+    const entries = (
+      instruction.entries ?? instruction.moduleItems ?? instruction.addEntries
+    ) as
+      | AnyObject[]
+      | undefined;
+    for (const entry of entries ?? []) {
+      for (const result of tweetResultsOf(entry)) {
+        const tweet = extractTweet(result, fallbackUsername);
+        if (tweet) tweets.push(tweet);
+      }
+    }
+  }
 }
 
 export const localX = {
@@ -33,21 +176,27 @@ export const localX = {
             const json = await response.json();
             const result = json?.data?.user?.result;
             if (result) {
-              const legacy = result.legacy || {};
+              const user = newUserStats(result) ?? legacyUserStats(result);
+              const bio = result.profile_bio as AnyObject | undefined;
               capturedProfile = {
-                username: legacy.screen_name || cleanUser,
-                name: legacy.name || cleanUser,
-                followersCount: legacy.followers_count || 0,
-                description: legacy.description || "",
-                profileImageUrl: legacy.profile_image_url_https || "",
+                username: user?.userName ?? cleanUser,
+                name: user?.name ?? cleanUser,
+                followersCount: user?.followersCount ?? 0,
+                description:
+                  typeof bio?.description === "string"
+                    ? bio.description
+                    : undefined,
+                profileImageUrl:
+                  (result.avatar as AnyObject | undefined)?.image_url ?? "",
               };
             }
           } catch {}
         }
       });
 
-      await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "networkidle", timeout: 25000 });
-      await page.waitForTimeout(2000);
+      await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(3000);
+      checkXSession(page);
 
       if (!capturedProfile) {
         // Fallback DOM extraction
@@ -68,60 +217,65 @@ export const localX = {
     }
   },
 
-  timeline: async (username: string, _cursor?: string, _includeReplies = false) => {
+  timeline: async (
+    username: string,
+    _cursor?: string,
+    _includeReplies = false,
+    limit = 100,
+    sinceTime?: number,
+  ) => {
     const cleanUser = username.replace(/^@/, "").trim();
     const { browser, context } = await getScraperContext("x");
 
     try {
       const page = await context.newPage();
       const tweets: LocalXTweet[] = [];
+      const pendingResponses = new Set<Promise<void>>();
 
-      page.on("response", async (response: any) => {
+      page.on("response", (response: any) => {
         const url = response.url();
         if (url.includes("/UserTweets") || url.includes("/UserByScreenName") || url.includes("TweetDetail")) {
-          try {
-            const json = await response.json();
-            const instructions = json?.data?.user?.result?.timeline_v2?.timeline?.instructions || json?.data?.threaded_conversation_with_injections_v2?.instructions || [];
-            
-            for (const inst of instructions) {
-              const entries = inst.entries || inst.moduleItems || [];
-              for (const entry of entries) {
-                const item = entry?.content?.itemContent?.tweet_results?.result || entry?.item?.itemContent?.tweet_results?.result;
-                const tweetData = item?.tweet || item;
-                const legacy = tweetData?.legacy;
-                const userLegacy = tweetData?.core?.user_results?.result?.legacy;
-
-                if (legacy && legacy.id_str) {
-                  tweets.push({
-                    id: legacy.id_str,
-                    text: legacy.full_text || legacy.text || "",
-                    createdAt: legacy.created_at || new Date().toISOString(),
-                    author: {
-                      userName: userLegacy?.screen_name || cleanUser,
-                      name: userLegacy?.name || cleanUser,
-                      followersCount: userLegacy?.followers_count,
-                    },
-                    likeCount: legacy.favorite_count || 0,
-                    replyCount: legacy.reply_count || 0,
-                    retweetCount: legacy.retweet_count || 0,
-                    quoteCount: legacy.quote_count || 0,
-                    url: `https://x.com/${userLegacy?.screen_name || cleanUser}/status/${legacy.id_str}`,
-                  });
-                }
-              }
-            }
-          } catch {}
+          const task = (async () => {
+            try {
+              const json = await response.json();
+              collectTweets(json as AnyObject, tweets, cleanUser);
+            } catch {}
+          })();
+          pendingResponses.add(task);
+          void task.finally(() => pendingResponses.delete(task));
         }
       });
 
-      await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "networkidle", timeout: 30000 });
-      await page.waitForTimeout(2000);
+      await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(2500);
+      checkXSession(page);
 
-      // Scroll a bit to fetch more items
-      for (let i = 0; i < 3; i++) {
-        await page.evaluate(() => window.scrollBy(0, 1000));
-        await page.waitForTimeout(1500);
+      // X carga el timeline por bloques. Seguimos hasta alcanzar la fecha
+      // solicitada, el límite, o hasta que varios scrolls no agreguen datos.
+      const maxScrolls = Math.min(40, Math.max(8, Math.ceil(limit / 10) + 4));
+      let previousCount = 0;
+      let stagnantScrolls = 0;
+      for (let i = 0; i < maxScrolls; i++) {
+        await page.evaluate(() => window.scrollBy(0, 1500));
+        await page.waitForTimeout(1800);
+        await Promise.allSettled([...pendingResponses]);
+
+        const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
+        stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
+        previousCount = uniqueCount;
+        const oldestTime = Math.min(
+          ...tweets.map((tweet) => new Date(tweet.createdAt).getTime()),
+        );
+        if (
+          uniqueCount >= limit ||
+          (sinceTime != null && Number.isFinite(oldestTime) && oldestTime <= sinceTime) ||
+          stagnantScrolls >= 3
+        ) {
+          break;
+        }
       }
+      await page.waitForTimeout(750);
+      await Promise.allSettled([...pendingResponses]);
 
       // Deduplicate tweets by id
       const uniqueMap = new Map<string, LocalXTweet>();
@@ -149,42 +303,19 @@ export const localX = {
         if (url.includes("/TweetDetail")) {
           try {
             const json = await response.json();
-            const instructions = json?.data?.threaded_conversation_with_injections_v2?.instructions || [];
-
-            for (const inst of instructions) {
-              const entries = inst.entries || [];
-              for (const entry of entries) {
-                const item = entry?.content?.itemContent?.tweet_results?.result;
-                const legacy = item?.legacy;
-                const userLegacy = item?.core?.user_results?.result?.legacy;
-
-                if (legacy && legacy.id_str && legacy.id_str !== tweetId) {
-                  replies.push({
-                    id: legacy.id_str,
-                    text: legacy.full_text || legacy.text || "",
-                    createdAt: legacy.created_at || new Date().toISOString(),
-                    author: {
-                      userName: userLegacy?.screen_name || "desconocido",
-                      name: userLegacy?.name || "Desconocido",
-                      followersCount: userLegacy?.followers_count,
-                    },
-                    likeCount: legacy.favorite_count || 0,
-                    replyCount: legacy.reply_count || 0,
-                    retweetCount: legacy.retweet_count || 0,
-                    inReplyToId: tweetId,
-                  });
-                }
-              }
-            }
+            collectTweets(json as AnyObject, replies);
           } catch {}
         }
       });
 
-      await page.goto(`https://x.com/i/status/${tweetId}`, { waitUntil: "networkidle", timeout: 30000 });
-      await page.waitForTimeout(2500);
+      await page.goto(`https://x.com/i/status/${tweetId}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(3500);
+      checkXSession(page);
 
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const r of replies) {
+        if (r.id === tweetId) continue;
+        r.inReplyToId = r.inReplyToId ?? tweetId;
         uniqueMap.set(r.id, r);
       }
 
@@ -196,52 +327,51 @@ export const localX = {
     }
   },
 
-  search: async (query: string, _sinceTime: number, _untilTime: number) => {
+  search: async (
+    query: string,
+    _sinceTime: number,
+    _untilTime: number,
+    limit = 100,
+  ) => {
     const { browser, context } = await getScraperContext("x");
 
     try {
       const page = await context.newPage();
       const tweets: LocalXTweet[] = [];
+      const pendingResponses = new Set<Promise<void>>();
 
-      page.on("response", async (response: any) => {
+      page.on("response", (response: any) => {
         const url = response.url();
-        if (url.includes("/SearchTimeline")) {
-          try {
-            const json = await response.json();
-            const instructions = json?.data?.search_by_raw_query?.search_timeline?.timeline?.instructions || [];
-
-            for (const inst of instructions) {
-              const entries = inst.entries || [];
-              for (const entry of entries) {
-                const item = entry?.content?.itemContent?.tweet_results?.result;
-                const legacy = item?.legacy;
-                const userLegacy = item?.core?.user_results?.result?.legacy;
-
-                if (legacy && legacy.id_str) {
-                  tweets.push({
-                    id: legacy.id_str,
-                    text: legacy.full_text || legacy.text || "",
-                    createdAt: legacy.created_at || new Date().toISOString(),
-                    author: {
-                      userName: userLegacy?.screen_name || "desconocido",
-                      name: userLegacy?.name || "Desconocido",
-                      followersCount: userLegacy?.followers_count,
-                    },
-                    likeCount: legacy.favorite_count || 0,
-                    replyCount: legacy.reply_count || 0,
-                    retweetCount: legacy.retweet_count || 0,
-                    quoteCount: legacy.quote_count || 0,
-                  });
-                }
-              }
-            }
-          } catch {}
+        if (url.includes("SearchTimeline") || url.includes("search") || url.includes("adaptive")) {
+          const task = (async () => {
+            try {
+              const json = await response.json();
+              collectTweets(json as AnyObject, tweets);
+            } catch {}
+          })();
+          pendingResponses.add(task);
+          void task.finally(() => pendingResponses.delete(task));
         }
       });
 
       const searchUrl = `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
-      await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 30000 });
+      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForTimeout(3000);
+      checkXSession(page);
+
+      const maxScrolls = Math.min(20, Math.max(4, Math.ceil(limit / 10)));
+      let previousCount = 0;
+      let stagnantScrolls = 0;
+      for (let i = 0; i < maxScrolls; i++) {
+        await page.evaluate(() => window.scrollBy(0, 1500));
+        await page.waitForTimeout(1800);
+        await Promise.allSettled([...pendingResponses]);
+        const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
+        stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
+        previousCount = uniqueCount;
+        if (uniqueCount >= limit || stagnantScrolls >= 3) break;
+      }
+      await Promise.allSettled([...pendingResponses]);
 
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const t of tweets) {
@@ -249,10 +379,12 @@ export const localX = {
       }
 
       await browser.close();
-      return { tweets: Array.from(uniqueMap.values()) };
+      return { tweets: Array.from(uniqueMap.values()).slice(0, limit) };
     } catch (error) {
       await browser.close();
-      return { tweets: [] };
+      throw new Error(
+        `Error en búsqueda local de X (${query}): ${error instanceof Error ? error.message : "Error desconocido"}`,
+      );
     }
   },
 };

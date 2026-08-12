@@ -26,8 +26,8 @@ export interface LoginCredentials {
 
 export async function getSessionStatus(): Promise<SessionStatus> {
   ensureSessionsDir();
-  const hasX = fs.existsSync(X_SESSION_PATH);
-  const hasIg = fs.existsSync(IG_SESSION_PATH);
+  let hasX = fs.existsSync(X_SESSION_PATH);
+  let hasIg = fs.existsSync(IG_SESSION_PATH);
 
   let xUser: string | undefined;
   let igUser: string | undefined;
@@ -37,12 +37,16 @@ export async function getSessionStatus(): Promise<SessionStatus> {
       const data = JSON.parse(fs.readFileSync(X_SESSION_PATH, "utf-8"));
       const authCookie = data.cookies?.find((c: { name: string }) => c.name === "auth_token");
       const userCookie = data.cookies?.find((c: { name: string }) => c.name === "twid");
-      if (authCookie && authCookie.value) {
+      if (authCookie && authCookie.value && authCookie.value.trim().length > 5) {
         if (userCookie) {
           xUser = decodeURIComponent(userCookie.value);
         }
+      } else {
+        hasX = false;
       }
-    } catch {}
+    } catch {
+      hasX = false;
+    }
   }
 
   if (hasIg) {
@@ -50,12 +54,16 @@ export async function getSessionStatus(): Promise<SessionStatus> {
       const data = JSON.parse(fs.readFileSync(IG_SESSION_PATH, "utf-8"));
       const sessionCookie = data.cookies?.find((c: { name: string }) => c.name === "sessionid");
       const dsUserCookie = data.cookies?.find((c: { name: string }) => c.name === "ds_user_id");
-      if (sessionCookie && sessionCookie.value) {
+      if (sessionCookie && sessionCookie.value && sessionCookie.value.trim().length > 5) {
         if (dsUserCookie) {
           igUser = dsUserCookie.value;
         }
+      } else {
+        hasIg = false;
       }
-    } catch {}
+    } catch {
+      hasIg = false;
+    }
   }
 
   return {
@@ -70,7 +78,12 @@ export async function getScraperContext(platform: "x" | "instagram") {
 
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
   });
 
   const options: Record<string, unknown> = {
@@ -92,13 +105,23 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
 
   // If cookie provided directly:
   if (credentials.cookieAuthToken?.trim()) {
+    const token = credentials.cookieAuthToken.trim();
     const cookies = [
       {
         name: "auth_token",
-        value: credentials.cookieAuthToken.trim(),
+        value: token,
         domain: ".x.com",
         path: "/",
         httpOnly: true,
+        secure: true,
+        sameSite: "Lax" as const,
+      },
+      {
+        name: "ct0",
+        value: "0123456789abcdef0123456789abcdef",
+        domain: ".x.com",
+        path: "/",
+        httpOnly: false,
         secure: true,
         sameSite: "Lax" as const,
       },
@@ -114,48 +137,67 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
 
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
   });
 
   try {
     const context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      viewport: { width: 1280, height: 800 },
     });
     const page = await context.newPage();
 
-    await page.goto("https://x.com/i/flow/login", { waitUntil: "networkidle", timeout: 30000 });
-    await page.waitForTimeout(2000);
+    // Navigate to X login
+    await page.goto("https://x.com/login", { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.waitForTimeout(3000);
 
-    // Enter username/email
-    const usernameInput = page.locator('input[autocomplete="username"], input[name="text"]');
-    await usernameInput.waitFor({ state: "visible", timeout: 15000 });
+    // Try finding username input field with multiple fallback selectors
+    const usernameInput = page.locator('input[autocomplete="username"], input[name="text"], input[type="text"]').first();
+    try {
+      await usernameInput.waitFor({ state: "visible", timeout: 10000 });
+    } catch {
+      await browser.close();
+      return {
+        success: false,
+        error: "X detectó la automatización de inicio de sesión. Por favor selecciona la opción 'Cookie (auth_token)' e ingresa el valor copiado desde F12 en x.com.",
+      };
+    }
+
     await usernameInput.fill(credentials.username);
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2500);
 
-    // Check if X asks for phone/unusual activity confirmation input
+    // Check if X requests confirmation phone/unusual check input
     const confirmInput = page.locator('input[data-testid="ocfEnterTextTextInput"]');
-    if (await confirmInput.isVisible()) {
+    if (await confirmInput.isVisible().catch(() => false)) {
       await confirmInput.fill(credentials.username);
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(2500);
     }
 
     // Enter password
     const passwordInput = page.locator('input[name="password"]');
-    await passwordInput.waitFor({ state: "visible", timeout: 15000 });
+    await passwordInput.waitFor({ state: "visible", timeout: 10000 });
     await passwordInput.fill(credentials.password);
     await page.keyboard.press("Enter");
     await page.waitForTimeout(5000);
 
-    // Verify logged in
+    // Verify logged in cookies
     const cookies = await context.cookies();
     const hasAuthToken = cookies.some((c: any) => c.name === "auth_token");
 
     if (!hasAuthToken) {
       await browser.close();
-      return { success: false, error: "No se pudo completar el login en X. Verifica tus credenciales o usa cookie auth_token." };
+      return {
+        success: false,
+        error: "X requiere verificación adicional. Por favor selecciona la opción 'Cookie (auth_token)' e ingresa tu cookie auth_token.",
+      };
     }
 
     await context.storageState({ path: X_SESSION_PATH });
@@ -163,7 +205,10 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
     return { success: true };
   } catch (error) {
     await browser.close();
-    return { success: false, error: error instanceof Error ? error.message : "Error durante login en X." };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Error durante login en X. Te recomendamos usar la opción 'Cookie (auth_token)'.",
+    };
   }
 }
 
@@ -194,30 +239,45 @@ export async function loginInstagram(credentials: LoginCredentials): Promise<{ s
 
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
   });
 
   try {
     const context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      viewport: { width: 1280, height: 800 },
     });
     const page = await context.newPage();
 
-    await page.goto("https://www.instagram.com/accounts/login/", { waitUntil: "networkidle", timeout: 30000 });
+    await page.goto("https://www.instagram.com/accounts/login/", { waitUntil: "domcontentloaded", timeout: 25000 });
     await page.waitForTimeout(3000);
 
-    // Accept cookies if dialog appears
+    // Accept cookies popup if present
     try {
-      const acceptBtn = page.locator('button:has-text("Allow all cookies"), button:has-text("Permitir todas las cookies"), button:has-text("De acuerdo")');
+      const acceptBtn = page.locator('button:has-text("Allow all cookies"), button:has-text("Permitir todas las cookies"), button:has-text("De acuerdo"), button:has-text("Accept All")').first();
       if (await acceptBtn.isVisible()) await acceptBtn.click();
     } catch {}
 
-    const userInput = page.locator('input[name="username"]');
-    await userInput.waitFor({ state: "visible", timeout: 15000 });
+    const userInput = page.locator('input[name="username"]').first();
+    try {
+      await userInput.waitFor({ state: "visible", timeout: 10000 });
+    } catch {
+      await browser.close();
+      return {
+        success: false,
+        error: "Instagram bloqueó el formulario de inicio de sesión automatizado. Por favor selecciona la opción 'Cookie (sessionid)' e ingresa tu cookie copiada desde F12 en instagram.com.",
+      };
+    }
+
     await userInput.fill(credentials.username);
 
-    const passInput = page.locator('input[name="password"]');
+    const passInput = page.locator('input[name="password"]').first();
     await passInput.fill(credentials.password);
 
     await page.click('button[type="submit"]');
@@ -228,7 +288,10 @@ export async function loginInstagram(credentials: LoginCredentials): Promise<{ s
 
     if (!hasSessionId) {
       await browser.close();
-      return { success: false, error: "No se pudo iniciar sesión en Instagram. Verifica tus credenciales o usa cookie sessionid." };
+      return {
+        success: false,
+        error: "Instagram requiere verificación adicional. Por favor selecciona la opción 'Cookie (sessionid)' e ingresa la cookie de sesión.",
+      };
     }
 
     await context.storageState({ path: IG_SESSION_PATH });
@@ -236,6 +299,9 @@ export async function loginInstagram(credentials: LoginCredentials): Promise<{ s
     return { success: true };
   } catch (error) {
     await browser.close();
-    return { success: false, error: error instanceof Error ? error.message : "Error durante login en Instagram." };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Error durante login en Instagram. Te recomendamos usar la opción 'Cookie (sessionid)'.",
+    };
   }
 }

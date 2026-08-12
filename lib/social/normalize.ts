@@ -98,7 +98,7 @@ export function normalizePost(
       num(pick(raw, ["viewCount", "videoViewCount", "viewsCount", "views"])),
     ),
     followers: available(
-      num(pick(raw, ["author.followers", "ownerFollowers", "followersCount"])),
+      num(pick(raw, ["author.followers", "author.followersCount", "ownerFollowers", "followersCount"])),
     ),
     url: text(pick(raw, ["url", "postUrl", "inputUrl", "displayUrl"])),
     hashtags: Array.isArray(pick(raw, ["hashtags"]))

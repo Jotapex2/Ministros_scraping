@@ -24,6 +24,9 @@ const defaultConfig = (): AnalysisConfig => ({
   queries: ["Gobierno de Chile"],
   limits,
   deepseekMode: "1000",
+  llmProvider: "deepseek",
+  ollamaHost: "http://127.0.0.1:11434",
+  ollamaModel: "llama3",
   apifyInputTemplates: {},
 });
 interface State {

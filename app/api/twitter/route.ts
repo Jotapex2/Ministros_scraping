@@ -14,6 +14,8 @@ const schema = z.discriminatedUnion("action", [
     username: z.string().min(1).max(50),
     cursor: z.string().max(5000).optional(),
     includeReplies: z.boolean().optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+    sinceTime: z.number().int().optional(),
   }),
   z.object({
     action: z.literal("replies"),
@@ -25,6 +27,7 @@ const schema = z.discriminatedUnion("action", [
     query: z.string().min(1).max(500),
     sinceTime: z.number().int(),
     untilTime: z.number().int(),
+    limit: z.number().int().min(1).max(500).optional(),
   }),
 ]);
 
@@ -47,6 +50,8 @@ export async function POST(request: Request) {
         body.username,
         body.cursor,
         body.includeReplies,
+        body.limit,
+        body.sinceTime,
       );
     } else if (body.action === "replies") {
       data = await localX.replies(body.tweetId, body.cursor);
@@ -55,6 +60,7 @@ export async function POST(request: Request) {
         body.query,
         body.sinceTime,
         body.untilTime,
+        body.limit,
       );
     }
 

@@ -1,9 +1,12 @@
 "use client";
+
+import { useState } from "react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Pie,
   PieChart,
@@ -15,17 +18,83 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
-import type { AnalysisSession } from "@/types/analysis";
+import type { AnalysisSession, MinisterMetric } from "@/types/analysis";
 import { formatNumber, formatPercent, numeric } from "@/lib/utils";
 import { ChartCard } from "./chart-card";
-import { Card } from "./ui";
+import { Button, Card, Select } from "./ui";
 import { wordFrequencies } from "@/lib/social/wordcloud";
+
 const COLORS = {
   positive: "#2f7d68",
   neutral: "#8a9490",
   negative: "#a9433a",
   uncertain: "#c8cecb",
 };
+
+const PIE_COLORS = [
+  "#263d48", "#8d5265", "#a97939", "#205e50", "#3b82f6",
+  "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1",
+  "#14b8a6", "#f43f5e", "#84cc16", "#06b6d4", "#a855f7"
+];
+
+// Regla de no colisión para los labels de torta: solo se etiquetan las porciones
+// con participación suficiente (>= SOV_MIN_LABEL_PERCENT). Las porciones más pequeñas
+// quedan identificables en la leyenda y el tooltip, evitando que los textos se solapen.
+const SOV_MIN_LABEL_PERCENT = 5;
+const SOV_LABEL_GAP = 30;
+
+function sovLabel({
+  cx,
+  cy,
+  midAngle,
+  outerRadius,
+  percent,
+  name,
+  value,
+}: {
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  outerRadius?: number;
+  percent?: number;
+  name?: string;
+  value?: number;
+}) {
+  if ((percent ?? 0) * 100 < SOV_MIN_LABEL_PERCENT) return null;
+  const RADIAN = Math.PI / 180;
+  const angle = (midAngle ?? 0) * RADIAN;
+  const outer = outerRadius ?? 0;
+  const labelR = outer + SOV_LABEL_GAP;
+  const centerX = cx ?? 0;
+  const edgeX = centerX + outer * Math.cos(-angle);
+  const edgeY = (cy ?? 0) + outer * Math.sin(-angle);
+  const textX = centerX + labelR * Math.cos(-angle);
+  const textY = (cy ?? 0) + labelR * Math.sin(-angle);
+  const anchor = textX >= centerX ? "start" : "end";
+  return (
+    <g>
+      <line
+        x1={edgeX}
+        y1={edgeY}
+        x2={textX >= centerX ? textX - 4 : textX + 4}
+        y2={textY}
+        stroke="#52525b"
+        strokeWidth={1}
+      />
+      <text
+        x={textX}
+        y={textY}
+        fill="#e4e4e7"
+        fontSize={11}
+        textAnchor={anchor}
+        dominantBaseline="central"
+      >
+        {`${String(name ?? "").split(" ").slice(0, 2).join(" ")} ${Number(value ?? 0).toFixed(1)}%`}
+      </text>
+    </g>
+  );
+}
+
 function Section({
   title,
   subtitle,
@@ -45,36 +114,236 @@ function Section({
     </section>
   );
 }
+
+function FilterBar({
+  platformFilter,
+  setPlatformFilter,
+  ministerLimit,
+  setMinisterLimit,
+  sortOrder,
+  setSortOrder,
+}: {
+  platformFilter: "all" | "x" | "instagram";
+  setPlatformFilter: (v: "all" | "x" | "instagram") => void;
+  ministerLimit: number | "all";
+  setMinisterLimit: (v: number | "all") => void;
+  sortOrder: "desc" | "asc";
+  setSortOrder: (v: "desc" | "asc") => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-4 p-4 mb-6 bg-neutral-900 border border-neutral-800 rounded-xl">
+      <div className="flex items-center space-x-2">
+        <span className="text-xs font-semibold text-neutral-400">Filtrar plataforma:</span>
+        <div className="flex space-x-1">
+          <Button
+            variant={platformFilter === "all" ? "default" : "outline"}
+            onClick={() => setPlatformFilter("all")}
+          >
+            Todas
+          </Button>
+          <Button
+            variant={platformFilter === "x" ? "default" : "outline"}
+            onClick={() => setPlatformFilter("x")}
+          >
+            X
+          </Button>
+          <Button
+            variant={platformFilter === "instagram" ? "default" : "outline"}
+            onClick={() => setPlatformFilter("instagram")}
+          >
+            Instagram
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center space-x-2">
+          <span className="text-xs font-semibold text-neutral-400">Ministros visibles:</span>
+          <Select
+            value={String(ministerLimit)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setMinisterLimit(val === "all" ? "all" : Number(val));
+            }}
+          >
+            <option value="5">Top 5</option>
+            <option value="10">Top 10</option>
+            <option value="15">Top 15</option>
+            <option value="all">Todos</option>
+          </Select>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <span className="text-xs font-semibold text-neutral-400">Orden:</span>
+          <Select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value as "desc" | "asc")}
+          >
+            <option value="desc">Mayor a menor</option>
+            <option value="asc">Menor a mayor</option>
+          </Select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const renderCustomScatterLabel = (props: any) => {
+  const { x, y, value } = props;
+  if (!value) return null;
+
+  // If point is close to the top boundary of SVG canvas, place label below point
+  const isNearTop = y < 50;
+  const dy = isNearTop ? 26 : -14;
+
+  return (
+    <text
+      x={x}
+      y={y + dy}
+      fill="#17231f"
+      textAnchor="middle"
+      fontSize={11}
+      fontWeight={600}
+      style={{
+        pointerEvents: "none",
+        paintOrder: "stroke",
+        stroke: "#fffefa",
+        strokeWidth: 4,
+        strokeLinejoin: "round",
+      }}
+    >
+      {value}
+    </text>
+  );
+};
+
 export function Dashboard({ session }: { session: AnalysisSession }) {
   const m = session.metrics;
+
+  // Interactive controls state for "Actividad e impacto ministerial"
+  const [actPlatformFilter, setActPlatformFilter] = useState<"all" | "x" | "instagram">("all");
+  const [actMinisterLimit, setActMinisterLimit] = useState<number | "all">(5);
+  const [actSortOrder, setActSortOrder] = useState<"desc" | "asc">("desc");
+
+  // Interactive controls state for "Conversación ministerial"
+  const [convPlatformFilter, setConvPlatformFilter] = useState<"all" | "x" | "instagram">("all");
+  const [convMinisterLimit, setConvMinisterLimit] = useState<number | "all">(10);
+  const [convSortOrder, setConvSortOrder] = useState<"desc" | "asc">("desc");
+
   if (!m) return null;
+
+  // Helper functions for dynamic calculation based on platform filter (Actividad e Impacto)
+  const getActPosts = (x: MinisterMetric) => {
+    if (actPlatformFilter === "x") return x.postsX;
+    if (actPlatformFilter === "instagram") return x.postsInstagram;
+    return x.postsX + x.postsInstagram;
+  };
+
+  const getActEngagement = (x: MinisterMetric) => {
+    if (actPlatformFilter === "x") return x.likesX + x.commentsX;
+    if (actPlatformFilter === "instagram") return x.likesInstagram + x.commentsInstagram;
+    return x.engagement;
+  };
+
+  const getActAverageEngagement = (x: MinisterMetric) => {
+    const posts = getActPosts(x);
+    const eng = getActEngagement(x);
+    return posts > 0 ? Number((eng / posts).toFixed(1)) : 0;
+  };
+
+  // Filter & sort minister rankings for Actividad e Impacto
+  const limitNumAct = actMinisterLimit === "all" ? m.ministerRankings.length : actMinisterLimit;
+
   const rankPosts = [...m.ministerRankings]
-    .sort((a, b) => b.postsX + b.postsInstagram - a.postsX - a.postsInstagram)
-    .slice(0, 10);
-  const rankEng = [...m.ministerRankings]
-    .sort((a, b) => b.engagement - a.engagement)
-    .slice(0, 10);
-  const mentions = [...m.ministerRankings]
-    .sort(
-      (a, b) =>
-        b.mentionsX + b.mentionsInstagram - a.mentionsX - a.mentionsInstagram,
+    .sort((a, b) =>
+      actSortOrder === "desc"
+        ? getActPosts(b) - getActPosts(a)
+        : getActPosts(a) - getActPosts(b)
     )
-    .slice(0, 10);
+    .slice(0, limitNumAct);
+
+  const rankEng = [...m.ministerRankings]
+    .sort((a, b) =>
+      actSortOrder === "desc"
+        ? getActEngagement(b) - getActEngagement(a)
+        : getActEngagement(a) - getActEngagement(b)
+    )
+    .slice(0, limitNumAct);
+
+  const impact = [...m.ministerRankings]
+    .sort((a, b) =>
+      actSortOrder === "desc"
+        ? getActPosts(b) - getActPosts(a)
+        : getActPosts(a) - getActPosts(b)
+    )
+    .slice(0, limitNumAct)
+    .map((x) => ({
+      name: x.name,
+      shortName: x.name.split(" ").slice(0, 2).join(" "),
+      x: getActPosts(x),
+      y: getActAverageEngagement(x),
+      z: Math.max(50, (x.followersX ?? 0) + (x.followersInstagram ?? 0)),
+      mentions: x.mentionsX + x.mentionsInstagram,
+    }));
+
+  // Helper functions for dynamic calculation based on platform & filters (Conversación Ministerial)
+  const getConvMentions = (x: MinisterMetric) => {
+    if (convPlatformFilter === "x") return x.mentionsX;
+    if (convPlatformFilter === "instagram") return x.mentionsInstagram;
+    return x.mentionsX + x.mentionsInstagram;
+  };
+
+  const totalConvMentionsFiltered = m.ministerRankings.reduce(
+    (sum, x) => sum + getConvMentions(x),
+    0
+  );
+
+  const limitNumConv = convMinisterLimit === "all" ? m.ministerRankings.length : convMinisterLimit;
+
+  const mentions = [...m.ministerRankings]
+    .sort((a, b) =>
+      convSortOrder === "desc"
+        ? getConvMentions(b) - getConvMentions(a)
+        : getConvMentions(a) - getConvMentions(b)
+    )
+    .slice(0, limitNumConv)
+    .map((x) => {
+      const mentionsVal = getConvMentions(x);
+      const sov = totalConvMentionsFiltered > 0
+        ? (mentionsVal / totalConvMentionsFiltered) * 100
+        : 0;
+      return {
+        ...x,
+        filteredMentions: mentionsVal,
+        filteredSOV: sov,
+      };
+    });
+
   const sentiment = Object.entries(m.governmentSentiment).map(
     ([name, value]) => ({ name, value }),
   );
+
+  const selectedSOV = mentions.reduce((sum, x) => sum + x.filteredSOV, 0);
+  const otherSOV = Math.max(0, 100 - selectedSOV);
+  const sovDonutData = [
+    ...mentions.map((x) => ({
+      name: x.name.split(" ").slice(0, 2).join(" "),
+      value: x.filteredSOV,
+      accountId: x.accountId,
+    })),
+    ...(totalConvMentionsFiltered > 0 && otherSOV > 0.05
+      ? [{ name: "Otros", value: otherSOV, accountId: "other" }]
+      : []),
+  ];
+
   const topicScatter = session.topics.map((t) => ({
     name: t.topicName,
     x: t.netSentiment,
     y: t.posts + t.comments,
     z: Math.max(30, t.engagement),
   }));
-  const impact = m.ministerRankings.map((x) => ({
-    name: x.name,
-    x: x.postsX + x.postsInstagram,
-    y: x.averageEngagement,
-    z: Math.max(50, (x.followersX ?? 0) + (x.followersInstagram ?? 0)),
-  }));
+
+  // Three word clouds as specified in graficos.md
   const positive = wordFrequencies(
     session.posts,
     session.sentiments,
@@ -85,6 +354,8 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
     session.sentiments,
     "negative",
   );
+  const totalWords = wordFrequencies(session.posts);
+
   return (
     <>
       <Section
@@ -109,7 +380,9 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
             </Card>
           ))}
           <Card>
-            <span className="kpi-label">DeepSeek</span>
+            <span className="kpi-label">
+              {session.config.llmProvider === "ollama" ? "Ollama" : "DeepSeek"}
+            </span>
             <div className="kpi-value">
               {session.quality.deepseek.processed}
             </div>
@@ -120,6 +393,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           </Card>
         </div>
       </Section>
+
       <Section
         title="Resumen ejecutivo"
         subtitle="Lectura descriptiva basada en métricas calculadas"
@@ -138,6 +412,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           )}
         </Card>
       </Section>
+
       <Section title="Indicadores generales">
         <div className="grid grid-4">
           {[
@@ -158,6 +433,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           ))}
         </div>
       </Section>
+
       <Section
         title="X vs Instagram"
         subtitle="Comparación descriptiva; las interacciones no son equivalencias exactas"
@@ -189,6 +465,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
+
           <ChartCard
             title="Sentimiento por plataforma"
             rows={(["x", "instagram"] as const).map((p) => ({
@@ -217,7 +494,20 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           </ChartCard>
         </div>
       </Section>
-      <Section title="Actividad e impacto ministerial">
+
+      <Section
+        title="Actividad e impacto ministerial"
+        subtitle="Rankings y gráfico de dispersión de ministros"
+      >
+        <FilterBar
+          platformFilter={actPlatformFilter}
+          setPlatformFilter={setActPlatformFilter}
+          ministerLimit={actMinisterLimit}
+          setMinisterLimit={setActMinisterLimit}
+          sortOrder={actSortOrder}
+          setSortOrder={setActSortOrder}
+        />
+
         <div className="grid grid-2">
           <ChartCard
             title="Ministros que más publicaron"
@@ -225,58 +515,67 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
               ministro: x.name,
               x: x.postsX,
               instagram: x.postsInstagram,
-              total: x.postsX + x.postsInstagram,
+              total: getActPosts(x),
             }))}
             insight={
               rankPosts[0]
-                ? `${rankPosts[0].name} registró la mayor actividad digital del período.`
+                ? `${rankPosts[0].name} registró la mayor actividad digital (${getActPosts(rankPosts[0])} publicaciones).`
                 : undefined
             }
           >
-            <ResponsiveContainer width="100%" height={330}>
+            <ResponsiveContainer width="100%" height={Math.max(250, rankPosts.length * 45)}>
               <BarChart
                 layout="vertical"
                 data={rankPosts.map((x) => ({
                   name: x.name.split(" ").slice(0, 2).join(" "),
-                  X: x.postsX,
-                  Instagram: x.postsInstagram,
+                  ...(actPlatformFilter === "all"
+                    ? { X: x.postsX, Instagram: x.postsInstagram }
+                    : actPlatformFilter === "x"
+                    ? { X: x.postsX }
+                    : { Instagram: x.postsInstagram }),
                 }))}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
-                <YAxis dataKey="name" type="category" width={100} />
+                <YAxis dataKey="name" type="category" width={110} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="X" stackId="a" fill="#263d48" />
-                <Bar dataKey="Instagram" stackId="a" fill="#8d5265" />
+                {(actPlatformFilter === "all" || actPlatformFilter === "x") && (
+                  <Bar dataKey="X" stackId="a" fill="#263d48" />
+                )}
+                {(actPlatformFilter === "all" || actPlatformFilter === "instagram") && (
+                  <Bar dataKey="Instagram" stackId="a" fill="#8d5265" />
+                )}
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
+
           <ChartCard
             title="Ministros con mayor interacción"
             rows={rankEng.map((x) => ({
               ministro: x.name,
-              interaccion: x.engagement,
-              promedio: x.averageEngagement,
+              interaccion: getActEngagement(x),
+              promedio: getActAverageEngagement(x),
             }))}
           >
-            <ResponsiveContainer width="100%" height={330}>
+            <ResponsiveContainer width="100%" height={Math.max(250, rankEng.length * 45)}>
               <BarChart
                 layout="vertical"
                 data={rankEng.map((x) => ({
                   name: x.name.split(" ").slice(0, 2).join(" "),
-                  Interacción: x.engagement,
+                  Interacción: getActEngagement(x),
                 }))}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
-                <YAxis dataKey="name" type="category" width={100} />
+                <YAxis dataKey="name" type="category" width={110} />
                 <Tooltip />
                 <Bar dataKey="Interacción" fill="#205e50" />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
         </div>
+
         <div style={{ marginTop: 14 }}>
           <ChartCard
             title="Actividad vs impacto"
@@ -285,21 +584,87 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
               publicaciones: x.x,
               engagement_promedio: x.y,
               seguidores: x.z,
+              menciones: x.mentions,
             }))}
           >
-            <ResponsiveContainer width="100%" height={360}>
-              <ScatterChart>
-                <CartesianGrid />
-                <XAxis type="number" dataKey="x" name="Publicaciones" />
-                <YAxis type="number" dataKey="y" name="Engagement/post" />
-                <ZAxis type="number" dataKey="z" range={[70, 700]} />
-                <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                <Scatter data={impact} fill="#a97939" />
+            <ResponsiveContainer width="100%" height={460}>
+              <ScatterChart margin={{ top: 40, right: 50, bottom: 45, left: 50 }}>
+                <CartesianGrid stroke="#cbd5e1" strokeDasharray="4 4" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  name="Publicaciones"
+                  tick={{ fill: "#334155", fontSize: 11 }}
+                  axisLine={{ stroke: "#64748b" }}
+                  tickLine={{ stroke: "#64748b" }}
+                  domain={[0, (dataMax: number) => Math.ceil((dataMax || 1) * 1.15)]}
+                  label={{
+                    value: "Eje X: Publicaciones propias (Nº de posts)",
+                    position: "insideBottom",
+                    offset: -20,
+                    style: { fill: "#334155", fontSize: 12, fontWeight: 700 }
+                  }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  name="Engagement/post"
+                  tick={{ fill: "#334155", fontSize: 11 }}
+                  axisLine={{ stroke: "#64748b" }}
+                  tickLine={{ stroke: "#64748b" }}
+                  domain={[0, (dataMax: number) => Math.ceil((dataMax || 10) * 1.25)]}
+                  label={{
+                    value: "Eje Y: Engagement promedio por publicación",
+                    angle: -90,
+                    position: "insideLeft",
+                    offset: -10,
+                    style: { fill: "#334155", fontSize: 12, fontWeight: 700, textAnchor: "middle" }
+                  }}
+                />
+                <ZAxis type="number" dataKey="z" range={[90, 800]} name="Seguidores" />
+                <Tooltip
+                  cursor={{ strokeDasharray: "3 3" }}
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="p-3 bg-neutral-900 border border-neutral-700 rounded-lg text-xs shadow-xl space-y-1">
+                          <p className="font-bold text-sm text-neutral-100">{data.name}</p>
+                          <p className="text-neutral-300">
+                            📌 <span className="font-medium text-neutral-400">Publicaciones propias:</span> <strong>{data.x}</strong>
+                          </p>
+                          <p className="text-neutral-300">
+                            📊 <span className="font-medium text-neutral-400">Engagement promedio / post:</span> <strong>{data.y}</strong>
+                          </p>
+                          <p className="text-neutral-300">
+                            💬 <span className="font-medium text-neutral-400">Menciones totales:</span> <strong>{data.mentions}</strong>
+                          </p>
+                          <p className="text-neutral-300">
+                            👥 <span className="font-medium text-neutral-400">Seguidores acumulados:</span> <strong>{formatNumber(data.z)}</strong>
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Scatter
+                  data={impact}
+                  fill="#0f766e"
+                  stroke="#fffefa"
+                  strokeWidth={2}
+                >
+                  <LabelList
+                    dataKey="shortName"
+                    content={renderCustomScatterLabel}
+                  />
+                </Scatter>
               </ScatterChart>
             </ResponsiveContainer>
           </ChartCard>
         </div>
       </Section>
+
       <Section
         title="Seguidores"
         subtitle="Agregados por plataforma; una persona puede seguir al ministro en más de una red"
@@ -326,8 +691,8 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                 .map((x) => (
                   <tr key={x.accountId}>
                     <td>{x.name}</td>
-                    <td>{formatNumber(x.followersX)}</td>
-                    <td>{formatNumber(x.followersInstagram)}</td>
+                    <td>{x.followersX == null ? "N/D" : formatNumber(x.followersX)}</td>
+                    <td>{x.followersInstagram == null ? "N/D" : formatNumber(x.followersInstagram)}</td>
                     <td>
                       {x.followersX == null && x.followersInstagram == null
                         ? "N/D"
@@ -341,7 +706,20 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           </table>
         </div>
       </Section>
-      <Section title="Conversación ministerial">
+
+      <Section
+        title="Conversación ministerial"
+        subtitle="Rankings y participación en menciones ministeriales"
+      >
+        <FilterBar
+          platformFilter={convPlatformFilter}
+          setPlatformFilter={setConvPlatformFilter}
+          ministerLimit={convMinisterLimit}
+          setMinisterLimit={setConvMinisterLimit}
+          sortOrder={convSortOrder}
+          setSortOrder={setConvSortOrder}
+        />
+
         <div className="grid grid-2">
           <ChartCard
             title="Ministros más mencionados"
@@ -349,53 +727,100 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
               ministro: x.name,
               x: x.mentionsX,
               instagram: x.mentionsInstagram,
-              total: x.mentionsX + x.mentionsInstagram,
+              total: x.filteredMentions,
               usuarios: x.uniqueAuthors,
               net_sentiment: x.netSentiment,
             }))}
           >
-            <ResponsiveContainer width="100%" height={330}>
+            <ResponsiveContainer width="100%" height={Math.max(250, mentions.length * 45)}>
               <BarChart
                 layout="vertical"
                 data={mentions.map((x) => ({
                   name: x.name.split(" ").slice(0, 2).join(" "),
-                  X: x.mentionsX,
-                  Instagram: x.mentionsInstagram,
+                  ...(convPlatformFilter === "all"
+                    ? { X: x.mentionsX, Instagram: x.mentionsInstagram }
+                    : convPlatformFilter === "x"
+                    ? { X: x.mentionsX }
+                    : { Instagram: x.mentionsInstagram }),
                 }))}
               >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
-                <YAxis type="category" dataKey="name" width={100} />
+                <YAxis type="category" dataKey="name" width={110} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="X" stackId="a" fill="#263d48" />
-                <Bar dataKey="Instagram" stackId="a" fill="#8d5265" />
+                {(convPlatformFilter === "all" || convPlatformFilter === "x") && (
+                  <Bar dataKey="X" stackId="a" fill="#263d48" />
+                )}
+                {(convPlatformFilter === "all" || convPlatformFilter === "instagram") && (
+                  <Bar dataKey="Instagram" stackId="a" fill="#8d5265" />
+                )}
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
+
           <ChartCard
             title="Participación en la conversación ministerial"
-            rows={mentions.map((x) => ({
+            rows={sovDonutData.map((x) => ({
               ministro: x.name,
-              share_of_voice: x.shareOfVoice,
+              share_of_voice: x.value,
             }))}
           >
-            <ResponsiveContainer width="100%" height={330}>
-              <BarChart
-                layout="vertical"
-                data={mentions.map((x) => ({
-                  name: x.name.split(" ").slice(0, 2).join(" "),
-                  SOV: x.shareOfVoice,
-                }))}
-              >
-                <XAxis type="number" tickFormatter={(v) => `${v}%`} />
-                <YAxis type="category" dataKey="name" width={100} />
+            <ResponsiveContainer width="100%" height={Math.max(350, sovDonutData.length * 24)}>
+              <PieChart>
+                <Pie
+                  data={sovDonutData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="42%"
+                  cy="50%"
+                  innerRadius="52%"
+                  outerRadius="76%"
+                  paddingAngle={3}
+                  isAnimationActive={false}
+                  labelLine={false}
+                  label={sovLabel}
+                >
+                  {sovDonutData.map((x, index) => (
+                    <Cell
+                      key={x.accountId}
+                      fill={
+                        x.name === "Otros"
+                          ? "#64748b"
+                          : PIE_COLORS[index % PIE_COLORS.length]
+                      }
+                    />
+                  ))}
+                </Pie>
                 <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                <Bar dataKey="SOV" fill="#a97939" />
-              </BarChart>
+                <Legend verticalAlign="middle" align="right" layout="vertical" />
+                <text
+                  x="42%"
+                  y="47%"
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill="#f4f4f5"
+                  fontSize={20}
+                  fontWeight={700}
+                >
+                  {formatNumber(totalConvMentionsFiltered)}
+                </text>
+                <text
+                  x="42%"
+                  y="57%"
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill="#a1a1aa"
+                  fontSize={11}
+                >
+                  menciones
+                </text>
+              </PieChart>
             </ResponsiveContainer>
           </ChartCard>
         </div>
       </Section>
+
       <Section title="Sentimiento">
         <div className="grid grid-2">
           <ChartCard
@@ -424,6 +849,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
               </PieChart>
             </ResponsiveContainer>
           </ChartCard>
+
           <Card>
             <h3 className="chart-title">Sentimiento por ministro</h3>
             <div className="table-wrap" style={{ maxHeight: 290 }}>
@@ -453,6 +879,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           </Card>
         </div>
       </Section>
+
       <Section title="Temas principales">
         <div className="grid grid-2">
           <Card>
@@ -486,6 +913,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
               </table>
             </div>
           </Card>
+
           <ChartCard
             title="Volumen y sentimiento de los principales temas"
             rows={topicScatter.map((x) => ({
@@ -505,7 +933,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                   name="Net Sentiment"
                 />
                 <YAxis type="number" dataKey="y" name="Volumen" />
-                <ZAxis type="number" dataKey="z" range={[80, 800]} />
+                <ZAxis type="number" dataKey="z" range={[80, 800]} name="Interacción" />
                 <Tooltip />
                 <Scatter data={topicScatter} fill="#205e50" />
               </ScatterChart>
@@ -513,42 +941,10 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           </ChartCard>
         </div>
       </Section>
-      <Section title="Publicaciones institucionales destacadas">
-        <div className="grid grid-3">
-          {(["x", "instagram", "general"] as const).map((key) => {
-            const p = m.topPosts[key];
-            return (
-              <Card key={key}>
-                <span className="kpi-label">Top post {key}</span>
-                {p ? (
-                  <>
-                    <h3>{p.authorName}</h3>
-                    <p style={{ fontSize: 13, lineHeight: 1.45 }}>
-                      {p.text.slice(0, 240)}
-                      {p.text.length > 240 ? "…" : ""}
-                    </p>
-                    <p>
-                      <strong>{formatNumber(numeric(p.likes))}</strong> likes ·{" "}
-                      {formatNumber(numeric(p.comments))} comentarios
-                    </p>
-                    {p.url && (
-                      <a href={p.url} target="_blank" rel="noreferrer">
-                        Ver publicación ↗
-                      </a>
-                    )}
-                  </>
-                ) : (
-                  <p>
-                    N/D · agregue cuentas institucionales y ejecute el análisis.
-                  </p>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-      </Section>
+
+      {/* Three Word Clouds as specified in graficos.md section 6 */}
       <Section title="Nubes de palabras">
-        <div className="grid grid-2">
+        <div className="grid grid-3">
           <Card>
             <h3 className="chart-title">Nube positiva</h3>
             <div className="wordcloud">
@@ -556,13 +952,14 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                 <span
                   key={w.word}
                   title={`${w.frequency}`}
-                  style={{ fontSize: 12 + w.score * 28, color: "var(--green)" }}
+                  style={{ fontSize: 12 + w.score * 24, color: "var(--green)" }}
                 >
                   {w.word}
                 </span>
               ))}
             </div>
           </Card>
+
           <Card>
             <h3 className="chart-title">Nube negativa</h3>
             <div className="wordcloud">
@@ -570,7 +967,22 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                 <span
                   key={w.word}
                   title={`${w.frequency}`}
-                  style={{ fontSize: 12 + w.score * 28, color: "var(--red)" }}
+                  style={{ fontSize: 12 + w.score * 24, color: "var(--red)" }}
+                >
+                  {w.word}
+                </span>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <h3 className="chart-title">Nube total</h3>
+            <div className="wordcloud">
+              {totalWords.map((w) => (
+                <span
+                  key={w.word}
+                  title={`${w.frequency}`}
+                  style={{ fontSize: 12 + w.score * 24, color: "var(--blue, #3b82f6)" }}
                 >
                   {w.word}
                 </span>

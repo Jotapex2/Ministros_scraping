@@ -10,16 +10,32 @@ import { aggregateTopics, emptySession, finalizeSession } from "./session";
 import { saveSession } from "@/lib/session/storage";
 
 async function api(path: string, body: unknown, signal?: AbortSignal) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
-  const result = await response.json();
-  if (!response.ok || !result.ok)
-    throw new Error(result.error || "Error de proveedor.");
-  return result.data;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok)
+        throw new Error(result.error || "Error de proveedor.");
+      return result.data;
+    } catch (error) {
+      lastError = error;
+      if (
+        signal?.aborted ||
+        (error instanceof DOMException && error.name === "AbortError") ||
+        attempt === 2
+      ) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Error de proveedor.");
 }
 const chunks = <T>(items: T[], size: number) =>
   Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
@@ -28,6 +44,7 @@ const chunks = <T>(items: T[], size: number) =>
 
 async function requestSentimentWithFallback(
   items: SocialPost[],
+  config: AnalysisConfig,
   signal: AbortSignal,
 ): Promise<{ results: SentimentResult[]; failed: number; errors: string[] }> {
   try {
@@ -36,6 +53,9 @@ async function requestSentimentWithFallback(
       {
         action: "sentiment",
         items: items.map((item) => ({ id: item.id, text: item.text })),
+        llmProvider: config.llmProvider,
+        ollamaHost: config.ollamaHost,
+        ollamaModel: config.ollamaModel,
       },
       signal,
     )) as SentimentResult[];
@@ -52,10 +72,12 @@ async function requestSentimentWithFallback(
     const middle = Math.ceil(items.length / 2);
     const left = await requestSentimentWithFallback(
       items.slice(0, middle),
+      config,
       signal,
     );
     const right = await requestSentimentWithFallback(
       items.slice(middle),
+      config,
       signal,
     );
     return {
@@ -98,6 +120,7 @@ export async function runAnalysis(
   onUpdate: (session: AnalysisSession) => void,
 ) {
   const session = emptySession(config);
+  const llmLabel = config.llmProvider === "ollama" ? "Ollama" : "DeepSeek";
   onUpdate({ ...session });
   try {
     if (!config.platforms.length)
@@ -128,26 +151,37 @@ export async function runAnalysis(
         session.stage = `Consultando X · cuenta ${accountIndex + 1} de ${accounts.length} · @${account.xUsername}`;
         onUpdate({ ...session });
         try {
-          const [profileRaw, firstTimeline] = await Promise.all([
-            api(
+          const rangeStart = new Date(`${config.startDate}T00:00:00`).getTime();
+          const rangeEnd = new Date(`${config.endDate}T23:59:59`).getTime();
+          let profileRaw: Record<string, unknown> | null = null;
+          try {
+            profileRaw = (await api(
               "/api/twitter",
               { action: "profile", username: account.xUsername },
               signal,
-            ),
-            api(
-              "/api/twitter",
+            )) as Record<string, unknown>;
+          } catch (error) {
+            session.errors.push(
+              `X perfil · ${account.name}: ${error instanceof Error ? error.message : "error"}`,
+            );
+          }
+          const firstTimeline = await api(
+            "/api/twitter",
               {
                 action: "timeline",
                 username: account.xUsername,
                 includeReplies: false,
+                limit: config.limits.xPostsPerAccount,
+                sinceTime: rangeStart,
               },
-              signal,
-            ),
-          ]);
-          const profileObject = (profileRaw.data ??
-            profileRaw.user ??
-            profileRaw) as Record<string, unknown>;
-          session.profiles.push(normalizeProfile(profileObject, "x", account));
+            signal,
+          );
+          if (profileRaw) {
+            const profileObject = (profileRaw.data ??
+              profileRaw.user ??
+              profileRaw) as Record<string, unknown>;
+            session.profiles.push(normalizeProfile(profileObject, "x", account));
+          }
           const timelineItems = [
             ...rawItems(firstTimeline as Record<string, unknown>, [
               "tweets",
@@ -176,6 +210,8 @@ export async function runAnalysis(
                 username: account.xUsername,
                 cursor,
                 includeReplies: false,
+                limit: config.limits.xPostsPerAccount,
+                sinceTime: rangeStart,
               },
               signal,
             )) as Record<string, unknown>;
@@ -191,17 +227,48 @@ export async function runAnalysis(
               break;
             cursor = nextCursor;
           }
-          const rangeStart = new Date(`${config.startDate}T00:00:00`).getTime();
-          const rangeEnd = new Date(`${config.endDate}T23:59:59`).getTime();
+
+          // El timeline de perfil de X puede truncarse antes del rango pedido.
+          // Complementamos con una búsqueda exacta por autor y fecha.
+          const dayAfterEnd = new Date(
+            new Date(`${config.endDate}T00:00:00Z`).getTime() + 86_400_000,
+          )
+            .toISOString()
+            .slice(0, 10);
+          try {
+            const accountSearch = (await api(
+              "/api/twitter",
+              {
+                action: "search",
+                query: `from:${account.xUsername.replace(/^@/, "")} since:${config.startDate} until:${dayAfterEnd}`,
+                sinceTime: Math.floor(rangeStart / 1000),
+                untilTime: Math.floor(rangeEnd / 1000),
+                limit: config.limits.xPostsPerAccount,
+              },
+              signal,
+            )) as Record<string, unknown>;
+            timelineItems.push(
+              ...rawItems(accountSearch, ["tweets", "data.tweets", "data"]),
+            );
+          } catch (error) {
+            session.errors.push(
+              `X búsqueda por cuenta · ${account.name}: ${error instanceof Error ? error.message : "error"}`,
+            );
+          }
+
           const posts = timelineItems
-            .slice(0, config.limits.xPostsPerAccount)
             .map((item) => normalizePost(item, "x", account))
             .filter(
               (item): item is SocialPost =>
                 !!item &&
                 new Date(item.createdAt).getTime() >= rangeStart &&
                 new Date(item.createdAt).getTime() <= rangeEnd,
-            );
+            )
+            .filter(
+              (item, index, items) =>
+                items.findIndex((candidate) => candidate.id === item.id) === index,
+            )
+            .slice(0, config.limits.xPostsPerAccount);
           session.posts.push(...posts);
           session.quality.x.succeeded++;
           session.quality.x.posts += posts.length;
@@ -318,149 +385,55 @@ export async function runAnalysis(
     if (config.platforms.includes("instagram")) {
       const accounts = active.filter((account) => account.instagramUsername);
       session.quality.instagram.requested = accounts.length;
-      if (accounts.length) {
+      const startsAt = new Date(`${config.startDate}T00:00:00`).getTime();
+      const endsAt = new Date(`${config.endDate}T23:59:59`).getTime();
+
+      for (const [accountIndex, account] of accounts.entries()) {
+        if (signal.aborted) throw new DOMException("Cancelado", "AbortError");
+        session.stage = `Consultando Instagram · cuenta ${accountIndex + 1} de ${accounts.length} · @${account.instagramUsername}`;
+        onUpdate({ ...session });
         try {
-          const template = config.apifyInputTemplates?.instagram ?? {};
-          const {
-            usernames: _legacyUsernames,
-            onlyPostsNewerThan: _legacyDateFilter,
-            search: _legacySearch,
-            searchType: _legacySearchType,
-            searchLimit: _legacySearchLimit,
-            ...safeTemplate
-          } = template;
-          void _legacyUsernames;
-          void _legacyDateFilter;
-          void _legacySearch;
-          void _legacySearchType;
-          void _legacySearchLimit;
-          const input = {
-            ...safeTemplate,
-            directUrls: accounts.map(
-              (account) =>
-                `https://www.instagram.com/${account.instagramUsername}/`,
-            ),
-            resultsLimit: config.limits.instagramPostsPerAccount,
-            resultsType: "posts",
-          };
-          const started = (await api(
+          const items = (await api(
             "/api/apify",
-            { action: "start", platform: "instagram", input },
+            {
+              action: "account_posts",
+              username: account.instagramUsername,
+              limit: config.limits.instagramPostsPerAccount,
+              sinceTime: startsAt,
+            },
             signal,
-          )) as { data?: { id?: string }; id?: string };
-          const runId = started.data?.id ?? started.id;
-          if (!runId) throw new Error("Apify no devolvió runId.");
-          sessionStorage.setItem("observatorio_apify_run", runId);
-          let status = "RUNNING";
-          let datasetId = "";
-          while (
-            !["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"].includes(status)
-          ) {
-            await new Promise((resolve) => setTimeout(resolve, 4000));
-            const raw = (await api(
-              "/api/apify",
-              { action: "status", runId },
-              signal,
-            )) as { data?: { status?: string; defaultDatasetId?: string } };
-            status = raw.data?.status ?? "RUNNING";
-            datasetId = raw.data?.defaultDatasetId ?? datasetId;
-            session.stage = `Consultando Instagram · Actor ${status}`;
-            onUpdate({ ...session });
+          )) as Record<string, unknown>[];
+
+          for (const item of items) {
+            const normalized = normalizePost(item, "instagram", account);
+            if (!normalized) continue;
+            const publishedAt = new Date(normalized.createdAt).getTime();
+            if (publishedAt < startsAt || publishedAt > endsAt) continue;
+            session.posts.push(normalized);
           }
-          if (status !== "SUCCEEDED")
-            throw new Error(`Actor finalizó con estado ${status}.`);
-          const byUsername = new Map(
-            accounts.map((account) => [
-              account.instagramUsername.toLowerCase(),
-              account,
-            ]),
-          );
-          let offset = 0;
-          while (
-            offset <
-            accounts.length * config.limits.instagramPostsPerAccount
-          ) {
-            const items = (await api(
-              "/api/apify",
-              { action: "items", datasetId, offset, limit: 250 },
-              signal,
-            )) as Record<string, unknown>[];
-            if (!items.length) break;
-            for (const item of items) {
-              const username = String(item.ownerUsername ?? item.username ?? "")
-                .replace(/^@/, "")
-                .toLowerCase();
-              const normalized = normalizePost(
-                item,
-                "instagram",
-                byUsername.get(username),
-              );
-              if (normalized) {
-                const publishedAt = new Date(normalized.createdAt).getTime();
-                const startsAt = new Date(
-                  `${config.startDate}T00:00:00`,
-                ).getTime();
-                const endsAt = new Date(`${config.endDate}T23:59:59`).getTime();
-                if (publishedAt < startsAt || publishedAt > endsAt) continue;
-                session.posts.push(normalized);
-                const comments = [
-                  item.latestComments,
-                  item.comments,
-                  item.childPosts,
-                ].find(Array.isArray) as Record<string, unknown>[] | undefined;
-                if (comments)
-                  session.posts.push(
-                    ...(comments
-                      .slice(0, config.limits.commentsPerPost)
-                      .map((comment) =>
-                        normalizePost(
-                          {
-                            ...comment,
-                            parentPostId: normalized.id,
-                            id:
-                              comment.id ??
-                              comment.pk ??
-                              `${normalized.id}-comment-${crypto.randomUUID()}`,
-                          },
-                          "instagram",
-                          undefined,
-                          true,
-                        ),
-                      )
-                      .filter(Boolean) as SocialPost[]),
-                  );
-              }
-            }
-            offset += items.length;
-            session.posts = deduplicatePosts(session.posts);
-            session.stage = `Descargando Instagram · ${offset} resultados del dataset`;
-            onUpdate({ ...session });
-            if (items.length < 250) break;
-          }
-          session.quality.instagram.succeeded = accounts.length;
-          session.quality.instagram.posts = session.posts.filter(
-            (post) => post.platform === "instagram" && !post.isComment,
-          ).length;
-          for (const account of accounts) {
-            const post = session.posts.find(
-              (item) =>
-                item.accountId === account.id && item.platform === "instagram",
+
+          session.quality.instagram.succeeded++;
+          const firstPost = items[0];
+          if (firstPost) {
+            session.profiles.push(
+              normalizeProfile(firstPost, "instagram", account),
             );
-            if (post)
-              session.profiles.push({
-                accountId: account.id,
-                platform: "instagram",
-                username: account.instagramUsername,
-                followers: post.followers,
-                capturedAt: new Date().toISOString(),
-              });
           }
         } catch (error) {
-          session.quality.instagram.errors = accounts.length;
+          session.quality.instagram.errors++;
           session.errors.push(
-            `Instagram: ${error instanceof Error ? error.message : "error"}`,
+            `Instagram · ${account.name}: ${error instanceof Error ? error.message : "error"}`,
           );
         }
+        session.posts = deduplicatePosts(session.posts);
+        session.quality.instagram.posts = session.posts.filter(
+          (post) => post.platform === "instagram" && !post.isComment,
+        ).length;
+        await checkpoint(
+          session,
+          `Instagram · ${accountIndex + 1} de ${accounts.length} cuentas completadas · ${session.quality.instagram.posts} publicaciones`,
+          onUpdate,
+        );
       }
       await checkpoint(
         session,
@@ -468,7 +441,7 @@ export async function runAnalysis(
         onUpdate,
       );
     }
-    session.stage = "Analizando sentimiento";
+    session.stage = `Analizando sentimiento con ${llmLabel}`;
     onUpdate({ ...session });
     const uniqueText = new Map<string, SocialPost>();
     session.posts.forEach((post) => {
@@ -482,7 +455,7 @@ export async function runAnalysis(
       selected,
       Math.min(50, config.limits.deepseekBatchSize),
     )) {
-      const outcome = await requestSentimentWithFallback(batch, signal);
+      const outcome = await requestSentimentWithFallback(batch, config, signal);
       for (const result of outcome.results) {
         session.sentiments.push(result);
         const sourceText = batch
@@ -504,12 +477,12 @@ export async function runAnalysis(
       session.quality.deepseek.errors += outcome.failed;
       if (outcome.errors.length) {
         session.errors.push(
-          `DeepSeek sentimiento: ${[...new Set(outcome.errors)].join(" · ")}`,
+          `Análisis de sentimiento: ${[...new Set(outcome.errors)].join(" · ")}`,
         );
       }
       await checkpoint(
         session,
-        `Sentimiento: ${session.quality.deepseek.processed}/${selected.length}`,
+        `${llmLabel}: ${session.quality.deepseek.processed}/${selected.length}`,
         onUpdate,
       );
     }
@@ -540,6 +513,9 @@ export async function runAnalysis(
                 ?.sentiment,
             })),
             existing: catalog,
+            llmProvider: config.llmProvider,
+            ollamaHost: config.ollamaHost,
+            ollamaModel: config.ollamaModel,
           },
           signal,
         )) as { assignments: typeof assignments };
@@ -548,7 +524,7 @@ export async function runAnalysis(
           if (!catalog.includes(item.topicName)) catalog.push(item.topicName);
       } catch (error) {
         session.errors.push(
-          `DeepSeek temas: ${error instanceof Error ? error.message : "error"}`,
+        `${llmLabel} temas: ${error instanceof Error ? error.message : "error"}`,
         );
       }
     }

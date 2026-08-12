@@ -39,5 +39,5 @@ export function wordFrequencies(
   return [...counts]
     .map(([word, frequency]) => ({ word, frequency, score: frequency / max }))
     .sort((a, b) => b.frequency - a.frequency)
-    .slice(0, 60);
+    .slice(0, 25);
 }

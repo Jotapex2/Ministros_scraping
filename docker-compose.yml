@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   observatorio-scraping:
     build:
@@ -11,6 +9,17 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=qwen3:4b
+      - OLLAMA_STARTUP_RETRIES=10
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./.sessions:/app/.sessions
+    healthcheck:
+      test: ["CMD", "node", "-e", "Promise.all([fetch('http://127.0.0.1:3000'),fetch(process.env.OLLAMA_HOST + '/api/tags')]).then(r=>{if(r.some(x=>!x.ok))process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
