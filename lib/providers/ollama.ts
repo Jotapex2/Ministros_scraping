@@ -128,11 +128,16 @@ function normalizeSentimentResult(raw: unknown, item: SentimentItem) {
   const target =
     typeof value.target === "string" ? value.target.trim() : "";
   const rawTargetKind = String(value.targetKind ?? "").toLowerCase();
-  const targetKind: TargetKindValue = targetKinds.includes(
+  const modelTargetKind: TargetKindValue = targetKinds.includes(
     rawTargetKind as TargetKindValue,
   )
     ? (rawTargetKind as TargetKindValue)
     : inferTargetKind(item.text, target);
+  const inferredTargetKind = inferTargetKind(item.text, target);
+  const targetKind =
+    modelTargetKind === "other" && inferredTargetKind !== "other"
+      ? inferredTargetKind
+      : modelTargetKind;
 
   return resultSchema.parse({
     id: item.id,
