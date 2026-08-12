@@ -297,6 +297,12 @@ body {
 .chart-card {
   min-height: 350px;
 }
+.chart-card .recharts-wrapper,
+.chart-card .recharts-text,
+.chart-card .recharts-legend-item-text,
+.chart-card .recharts-tooltip-wrapper {
+  font-family: Arial, Helvetica, sans-serif;
+}
 .chart-title {
   font-family: Georgia, serif;
   font-size: 18px;

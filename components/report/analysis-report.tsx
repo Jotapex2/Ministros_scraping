@@ -28,6 +28,16 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 29, lineHeight: 1.08, marginBottom: 18 },
   subtitle: { fontSize: 13, color: "#d8dfdb", marginBottom: 44 },
+  demoBadge: {
+    alignSelf: "flex-start",
+    border: "1 solid #bf9b61",
+    color: "#f6d89e",
+    fontSize: 8,
+    letterSpacing: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 18,
+  },
   section: { fontSize: 17, marginBottom: 14, color: "#142b26" },
   sectionSubtitle: {
     fontSize: 8,
@@ -322,41 +332,67 @@ const RankedBars = ({
 const ImpactScatter = ({ items }: { items: MinisterMetric[] }) => {
   const maxPosts = Math.max(1, ...items.map((item) => item.postsX + item.postsInstagram));
   const maxAverage = Math.max(1, ...items.map((item) => item.averageEngagement));
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
   return (
     <View>
-      <Text style={styles.axisLabelY}>Engagement promedio / publicación</Text>
+      <Text style={{ fontSize: 7, color: "#526962", marginLeft: 34 }}>
+        Eje Y: engagement promedio por publicación
+      </Text>
       <View style={styles.scatter}>
-        {items.map((item) => {
+        {ticks.map((ratio) => (
+          <React.Fragment key={`impact-${ratio}`}>
+            <View
+              style={[styles.topicGridVertical, { left: `${ratio * 100}%` }]}
+            />
+            <Text style={[styles.topicTickX, { left: `${ratio * 100}%` }]}>
+              {Math.round(maxPosts * ratio)}
+            </Text>
+            <View
+              style={[styles.topicGridHorizontal, { bottom: `${ratio * 100}%` }]}
+            />
+            <Text style={[styles.topicTickY, { bottom: `${ratio * 100}%` }]}>
+              {formatNumber(Math.round(maxAverage * ratio))}
+            </Text>
+          </React.Fragment>
+        ))}
+        {items.map((item, index) => {
           const posts = item.postsX + item.postsInstagram;
-          const left = Math.min(94, Math.max(1, (posts / maxPosts) * 94));
+          const left = Math.min(97, Math.max(3, (posts / maxPosts) * 100));
           const bottom = Math.min(
-            94,
-            Math.max(1, (item.averageEngagement / maxAverage) * 94),
+            96,
+            Math.max(3, (item.averageEngagement / maxAverage) * 100),
           );
           return (
-            <React.Fragment key={item.accountId}>
-              <View
-                style={[
-                  styles.scatterPoint,
-                  { left: `${left}%`, bottom: `${bottom}%` },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.scatterLabel,
-                  {
-                    left: `${Math.max(0, left - 7)}%`,
-                    bottom: `${Math.min(96, bottom + 3)}%`,
-                  },
-                ]}
-              >
-                {item.name.split(" ").slice(0, 2).join(" ")}
-              </Text>
-            </React.Fragment>
+            <View
+              key={item.accountId}
+              style={[
+                styles.topicPoint,
+                {
+                  left: `${left}%`,
+                  bottom: `${bottom}%`,
+                  width: 16,
+                  height: 16,
+                  borderRadius: 8,
+                  marginLeft: -8,
+                  marginBottom: -8,
+                },
+              ]}
+            >
+              <Text style={styles.topicPointNumber}>{index + 1}</Text>
+            </View>
           );
         })}
       </View>
-      <Text style={styles.axisLabelX}>Publicaciones propias</Text>
+      <Text
+        style={{
+          fontSize: 7,
+          color: "#526962",
+          textAlign: "center",
+          marginTop: -16,
+        }}
+      >
+        Eje X: publicaciones propias
+      </Text>
     </View>
   );
 };
@@ -371,6 +407,9 @@ const TopicScatter = ({ topics }: { topics: AnalysisSession["topics"] }) => {
   const yTicks = [0, 0.25, 0.5, 0.75, 1];
   return (
     <View>
+      <Text style={{ fontSize: 7, color: "#526962", marginLeft: 38 }}>
+        Eje Y: volumen del tema (publicaciones + comentarios)
+      </Text>
       <View style={styles.topicScatter}>
         {xTicks.map((tick) => {
           const left = ((tick + 100) / 200) * 100;
@@ -428,14 +467,20 @@ const TopicScatter = ({ topics }: { topics: AnalysisSession["topics"] }) => {
           );
         })}
       </View>
-      <Text style={[styles.axisLabelX, { bottom: 17, left: 155 }]}>
+      <Text
+        style={{
+          fontSize: 7,
+          color: "#526962",
+          textAlign: "center",
+          marginTop: -17,
+        }}
+      >
         Eje X: Net Sentiment (%) = % positivo - % negativo
       </Text>
-      <Text style={styles.note}>
-        Eje Y: volumen del tema (publicaciones + comentarios). Cada burbuja
-        lleva el número de su fila en la tabla; su tamaño representa la
-        interacción. Un valor X negativo indica predominio de sentimiento
-        negativo y uno positivo, predominio positivo.
+      <Text style={[styles.note, { marginTop: 20 }]}>
+        Cada burbuja lleva el número de su fila en la tabla; su tamaño
+        representa la interacción. Un valor X negativo indica predominio de
+        sentimiento negativo y uno positivo, predominio positivo.
       </Text>
     </View>
   );
@@ -471,6 +516,7 @@ const WordCloud = ({
 );
 
 export function AnalysisReport({ session }: { session: AnalysisSession }) {
+  const isReviewFixture = session.id === "pdf-layout-fixture";
   const metrics = session.metrics;
   const rankings = metrics?.ministerRankings ?? [];
   const byPosts = [...rankings].sort(
@@ -523,6 +569,11 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
         <Text style={styles.subtitle}>
           Análisis de conversación y desempeño digital en X e Instagram
         </Text>
+        {isReviewFixture && (
+          <Text style={styles.demoBadge}>
+            MUESTRA DE DISEÑO · DATOS SINTÉTICOS
+          </Text>
+        )}
         <Text>
           Período: {session.config.startDate} - {session.config.endDate}
         </Text>
@@ -645,8 +696,8 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           ).slice(0, 10)}
         />
         <Text style={styles.note}>
-          La posición refleja actividad y promedio de interacción; el detalle
-          completo se presenta en la página siguiente.
+          Cada burbuja lleva el número de su fila en la tabla siguiente. La
+          posición refleja actividad e interacción promedio.
         </Text>
         <Footer />
       </Page>
@@ -657,13 +708,15 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
         </Text>
         <Table
           headers={[
+            "N°",
             "Ministro",
             "Publicaciones",
             "Engagement/post",
             "Menciones",
             "Seguidores agregados",
           ]}
-          rows={byPosts.map((m) => [
+          rows={byPosts.map((m, index) => [
+            index + 1,
             m.name,
             m.postsX + m.postsInstagram,
             formatNumber(Math.round(m.averageEngagement)),
@@ -672,7 +725,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
               ? "N/D"
               : formatNumber((m.followersX ?? 0) + (m.followersInstagram ?? 0)),
           ])}
-          widths={[2.2, 0.9, 1, 0.8, 1.2]}
+          widths={[0.35, 2.2, 0.9, 1, 0.8, 1.2]}
           compact
         />
         <Footer />

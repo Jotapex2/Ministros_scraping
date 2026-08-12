@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { Download, Ellipsis } from "lucide-react";
+import { Download, ImageDown } from "lucide-react";
 import { toPng } from "html-to-image";
 import { Button, Card } from "./ui";
 import { downloadCsv } from "@/lib/export/csv";
@@ -32,9 +32,13 @@ export function ChartCard({
     if (!ref.current || savingPng) return;
     setSavingPng(true);
     try {
-      const dataUrl = await toPng(ref.current, {
+      await document.fonts?.ready;
+      const chart = ref.current;
+      const dataUrl = await toPng(chart, {
         backgroundColor: "#fffefa",
         pixelRatio: 2,
+        width: chart.scrollWidth,
+        height: chart.scrollHeight,
         cacheBust: true,
         filter: (node) =>
           !(node instanceof HTMLElement) ||
@@ -43,7 +47,9 @@ export function ChartCard({
       const link = document.createElement("a");
       link.download = `${fileStem(title)}.png`;
       link.href = dataUrl;
+      document.body.appendChild(link);
       link.click();
+      link.remove();
     } catch (error) {
       console.error(`No se pudo capturar el gráfico "${title}".`, error);
       alert("No fue posible generar la captura PNG de este gráfico.");
@@ -80,7 +86,7 @@ export function ChartCard({
             onClick={png}
             disabled={savingPng}
           >
-            <Ellipsis size={15} /> {savingPng ? "Guardando…" : "PNG"}
+            <ImageDown size={15} /> {savingPng ? "Guardando…" : "PNG"}
           </Button>
           <Button variant="ghost" onClick={() => setShowData(!showData)}>
             Ver datos

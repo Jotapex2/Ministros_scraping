@@ -35,6 +35,7 @@ describe("executive PDF", () => {
     );
     const richConfig = { ...config, accounts: ministerAccounts };
     const session = emptySession(richConfig);
+    session.id = "pdf-layout-fixture";
     const words = [
       "seguridad",
       "familias",
@@ -60,7 +61,7 @@ describe("executive PDF", () => {
             authorType: "minister",
             accountId: account.id,
             ministerId: account.id,
-            text: `${index % 3 === 0 ? "Excelente avance" : index % 3 === 1 ? "Crítica por retraso" : "Información oficial"} en ${words[index % words.length]} para Chile, familias y comunidad. ${account.xUsername ? `@${account.xUsername}` : `@${account.instagramUsername}`} presentó la agenda.`,
+            text: `${index % 3 === 0 ? "Excelente avance" : index % 3 === 1 ? "Crítica por retraso" : "Información oficial"} en ${words[index % words.length]} para Chile, familias y comunidad. Se presentó la agenda.`,
             createdAt: `2026-08-0${(index % 7) + 1}T12:0${pieceIndex}:00Z`,
             likes: available(
               1000 + index * 137 + platformIndex * 250 + pieceIndex * 31,
@@ -75,6 +76,34 @@ describe("executive PDF", () => {
             hashtags: [],
           }),
         ),
+      ),
+    );
+    session.posts.push(
+      ...ministerAccounts.flatMap((account, index) =>
+        Array.from({ length: (index % 7) + 1 }, (_, mentionIndex): SocialPost => {
+          const useX = mentionIndex % 2 === 0 && Boolean(account.xUsername);
+          const platform = useX ? "x" : "instagram";
+          const handle = useX ? account.xUsername : account.instagramUsername;
+          return {
+            id: `public-${account.id}-${mentionIndex}`,
+            platform,
+            authorName: `Usuario ${index + 1}-${mentionIndex + 1}`,
+            username: `usuario_${index + 1}_${mentionIndex + 1}`,
+            authorType: "public",
+            text: `Comentario público sobre @${handle} y su gestión en ${words[index % words.length]}.`,
+            createdAt: `2026-08-0${(index % 7) + 1}T18:${String(mentionIndex).padStart(2, "0")}:00Z`,
+            likes: available(25 + index * 4 + mentionIndex),
+            comments: available(2 + mentionIndex),
+            shares: available(mentionIndex),
+            reposts: available(mentionIndex),
+            quotes: available(0),
+            views: available(200 + index * 10),
+            followers: available(undefined),
+            url: `https://example.com/public/${account.id}/${mentionIndex}`,
+            hashtags: [],
+            isComment: true,
+          };
+        }),
       ),
     );
     session.profiles = ministerAccounts.flatMap((account, index) => [
@@ -127,7 +156,7 @@ describe("executive PDF", () => {
       negative: 2,
       neutral: 3,
       uncertain: 0,
-      netSentiment: 12.5,
+      netSentiment: -90 + index * 20,
       platformDistribution: { x: 50, instagram: 50 },
       keywords: [word, "chile", "agenda"],
     }));

@@ -28,7 +28,7 @@ const COLORS = {
   positive: "#2f7d68",
   neutral: "#8a9490",
   negative: "#a9433a",
-  uncertain: "#c8cecb",
+  uncertain: "#5f6f69",
 };
 
 const PIE_COLORS = [
@@ -84,8 +84,10 @@ function sovLabel({
       <text
         x={textX}
         y={textY}
-        fill="#e4e4e7"
+        fill="#263d48"
         fontSize={11}
+        fontFamily="Arial, Helvetica, sans-serif"
+        fontWeight={600}
         textAnchor={anchor}
         dominantBaseline="central"
       >
@@ -800,9 +802,10 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                   y="47%"
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fill="#f4f4f5"
+                  fill="#17231f"
                   fontSize={20}
                   fontWeight={700}
+                  fontFamily="Arial, Helvetica, sans-serif"
                 >
                   {formatNumber(totalConvMentionsFiltered)}
                 </text>
@@ -811,8 +814,9 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                   y="57%"
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fill="#a1a1aa"
+                  fill="#526962"
                   fontSize={11}
+                  fontFamily="Arial, Helvetica, sans-serif"
                 >
                   menciones
                 </text>
