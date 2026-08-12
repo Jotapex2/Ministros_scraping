@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -37,46 +37,90 @@ const PIE_COLORS = [
   "#14b8a6", "#f43f5e", "#84cc16", "#06b6d4", "#a855f7"
 ];
 
+function chartDisplayName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 3) return name;
+  const initials = `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toLocaleUpperCase(
+    "es-CL",
+  );
+  return `${initials} ${parts[2]}`;
+}
+
 // Regla de no colisión para los labels de torta: solo se etiquetan las porciones
 // con participación suficiente (>= SOV_MIN_LABEL_PERCENT). Las porciones más pequeñas
 // quedan identificables en la leyenda y el tooltip, evitando que los textos se solapen.
 const SOV_MIN_LABEL_PERCENT = 5;
-const SOV_LABEL_GAP = 30;
+const SOV_LABEL_GAP = 22;
 
 function sovLabel({
   cx,
   cy,
   midAngle,
   outerRadius,
+  innerRadius,
   percent,
   name,
   value,
+  chartWidth,
+  chartHeight,
+  rightBoundary,
+  compact,
 }: {
   cx?: number;
   cy?: number;
   midAngle?: number;
   outerRadius?: number;
+  innerRadius?: number;
   percent?: number;
   name?: string;
   value?: number;
+  chartWidth: number;
+  chartHeight: number;
+  rightBoundary?: number;
+  compact?: boolean;
 }) {
   if ((percent ?? 0) * 100 < SOV_MIN_LABEL_PERCENT) return null;
   const RADIAN = Math.PI / 180;
   const angle = (midAngle ?? 0) * RADIAN;
   const outer = outerRadius ?? 0;
+  if (compact) {
+    const radius = ((innerRadius ?? 0) + outer) / 2;
+    return (
+      <text
+        x={(cx ?? 0) + radius * Math.cos(-angle)}
+        y={(cy ?? 0) + radius * Math.sin(-angle)}
+        fill="#ffffff"
+        fontSize={8}
+        fontFamily="Arial, Helvetica, sans-serif"
+        fontWeight={700}
+        textAnchor="middle"
+        dominantBaseline="central"
+      >
+        {`${Number(value ?? 0).toFixed(0)}%`}
+      </text>
+    );
+  }
   const labelR = outer + SOV_LABEL_GAP;
   const centerX = cx ?? 0;
   const edgeX = centerX + outer * Math.cos(-angle);
   const edgeY = (cy ?? 0) + outer * Math.sin(-angle);
-  const textX = centerX + labelR * Math.cos(-angle);
-  const textY = (cy ?? 0) + labelR * Math.sin(-angle);
-  const anchor = textX >= centerX ? "start" : "end";
+  const label = `${chartDisplayName(String(name ?? ""))} ${Number(value ?? 0).toFixed(1)}%`;
+  const estimatedTextWidth = Math.min(145, label.length * 6.2);
+  const onRight = centerX + labelR * Math.cos(-angle) >= centerX;
+  const anchor = onRight ? "start" : "end";
+  const rawTextX = centerX + labelR * Math.cos(-angle);
+  const rawTextY = (cy ?? 0) + labelR * Math.sin(-angle);
+  const safeRight = rightBoundary ?? chartWidth - 10;
+  const textX = onRight
+    ? Math.min(rawTextX, safeRight - estimatedTextWidth)
+    : Math.max(rawTextX, estimatedTextWidth + 10);
+  const textY = Math.min(chartHeight - 16, Math.max(16, rawTextY));
   return (
     <g>
       <line
         x1={edgeX}
         y1={edgeY}
-        x2={textX >= centerX ? textX - 4 : textX + 4}
+        x2={onRight ? textX - 4 : textX + 4}
         y2={textY}
         stroke="#52525b"
         strokeWidth={1}
@@ -91,9 +135,137 @@ function sovLabel({
         textAnchor={anchor}
         dominantBaseline="central"
       >
-        {`${String(name ?? "").split(" ").slice(0, 2).join(" ")} ${Number(value ?? 0).toFixed(1)}%`}
+        {label}
       </text>
     </g>
+  );
+}
+
+type SovDonutDatum = {
+  name: string;
+  fullName: string;
+  value: number;
+  accountId: string;
+};
+
+function SovDonutChart({
+  data,
+  total,
+}: {
+  data: SovDonutDatum[];
+  total: number;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [chartWidth, setChartWidth] = useState(560);
+  const compact = chartWidth < 520;
+  const chartHeight = Math.max(compact ? 470 : 390, data.length * 26);
+  const centerX = compact ? "50%" : "40%";
+  const centerY = compact ? "42%" : "50%";
+  const labelRightBoundary = compact ? chartWidth - 10 : chartWidth * 0.76;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = () => setChartWidth(Math.max(320, host.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={hostRef} className="sov-donut-chart">
+      <ResponsiveContainer width="100%" height={chartHeight}>
+        <PieChart margin={{ top: 28, right: 24, bottom: 28, left: 24 }}>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            cx={centerX}
+            cy={centerY}
+            innerRadius={compact ? "42%" : "47%"}
+            outerRadius={compact ? "58%" : "66%"}
+            paddingAngle={3}
+            isAnimationActive={false}
+            labelLine={false}
+            label={(props) =>
+              sovLabel({
+                ...props,
+                chartWidth,
+                chartHeight,
+                rightBoundary: labelRightBoundary,
+                compact,
+              })
+            }
+          >
+            {data.map((item, index) => (
+              <Cell
+                key={item.accountId}
+                fill={
+                  item.name === "Otros"
+                    ? "#64748b"
+                    : PIE_COLORS[index % PIE_COLORS.length]
+                }
+              />
+            ))}
+          </Pie>
+          <Tooltip
+            formatter={(value, _name, item) => [
+              `${Number(value).toFixed(1)}%`,
+              item.payload.fullName,
+            ]}
+          />
+          <Legend
+            verticalAlign={compact ? "bottom" : "middle"}
+            align={compact ? "center" : "right"}
+            layout={compact ? "horizontal" : "vertical"}
+            wrapperStyle={compact ? { paddingTop: 14, lineHeight: "22px" } : undefined}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="sov-donut-total">
+        <strong>{formatNumber(total)}</strong>
+        <span>menciones</span>
+      </div>
+    </div>
+  );
+}
+
+function sentimentSliceLabel({
+  cx,
+  cy,
+  midAngle,
+  innerRadius,
+  outerRadius,
+  percent,
+  value,
+}: {
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  innerRadius?: number;
+  outerRadius?: number;
+  percent?: number;
+  value?: number;
+}) {
+  if ((percent ?? 0) < 0.04) return null;
+  const radius = ((innerRadius ?? 0) + (outerRadius ?? 0)) / 2;
+  const angle = -((midAngle ?? 0) * Math.PI) / 180;
+  const x = (cx ?? 0) + radius * Math.cos(angle);
+  const y = (cy ?? 0) + radius * Math.sin(angle);
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="#ffffff"
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontFamily="Arial, Helvetica, sans-serif"
+      fontSize={11}
+      fontWeight={700}
+    >
+      {formatNumber(value ?? 0)}
+    </text>
   );
 }
 
@@ -281,7 +453,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
     .slice(0, limitNumAct)
     .map((x) => ({
       name: x.name,
-      shortName: x.name.split(" ").slice(0, 2).join(" "),
+      shortName: chartDisplayName(x.name),
       x: getActPosts(x),
       y: getActAverageEngagement(x),
       z: Math.max(50, (x.followersX ?? 0) + (x.followersInstagram ?? 0)),
@@ -329,12 +501,13 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
   const otherSOV = Math.max(0, 100 - selectedSOV);
   const sovDonutData = [
     ...mentions.map((x) => ({
-      name: x.name.split(" ").slice(0, 2).join(" "),
+      name: chartDisplayName(x.name),
+      fullName: x.name,
       value: x.filteredSOV,
       accountId: x.accountId,
     })),
     ...(totalConvMentionsFiltered > 0 && otherSOV > 0.05
-      ? [{ name: "Otros", value: otherSOV, accountId: "other" }]
+      ? [{ name: "Otros", fullName: "Otros", value: otherSOV, accountId: "other" }]
       : []),
   ];
 
@@ -451,6 +624,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           >
             <ResponsiveContainer width="100%" height={270}>
               <BarChart
+                margin={{ top: 12, right: 20, bottom: 8, left: 8 }}
                 data={(["x", "instagram"] as const).map((p) => ({
                   name: p === "x" ? "X" : "Instagram",
                   publicaciones: m.platformMetrics[p].posts,
@@ -478,6 +652,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           >
             <ResponsiveContainer width="100%" height={270}>
               <BarChart
+                margin={{ top: 12, right: 20, bottom: 8, left: 8 }}
                 data={(["x", "instagram"] as const).map((p) => ({
                   name: p === "x" ? "X" : "Instagram",
                   ...m.platformMetrics[p].sentiment,
@@ -529,8 +704,10 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
             <ResponsiveContainer width="100%" height={Math.max(250, rankPosts.length * 45)}>
               <BarChart
                 layout="vertical"
+                margin={{ top: 12, right: 24, bottom: 8, left: 8 }}
                 data={rankPosts.map((x) => ({
-                  name: x.name.split(" ").slice(0, 2).join(" "),
+                  name: chartDisplayName(x.name),
+                  fullName: x.name,
                   ...(actPlatformFilter === "all"
                     ? { X: x.postsX, Instagram: x.postsInstagram }
                     : actPlatformFilter === "x"
@@ -541,7 +718,11 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
                 <YAxis dataKey="name" type="category" width={110} />
-                <Tooltip />
+                <Tooltip
+                  labelFormatter={(label, payload) =>
+                    payload?.[0]?.payload?.fullName ?? label
+                  }
+                />
                 <Legend />
                 {(actPlatformFilter === "all" || actPlatformFilter === "x") && (
                   <Bar dataKey="X" stackId="a" fill="#263d48" />
@@ -564,15 +745,21 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
             <ResponsiveContainer width="100%" height={Math.max(250, rankEng.length * 45)}>
               <BarChart
                 layout="vertical"
+                margin={{ top: 12, right: 24, bottom: 8, left: 8 }}
                 data={rankEng.map((x) => ({
-                  name: x.name.split(" ").slice(0, 2).join(" "),
+                  name: chartDisplayName(x.name),
+                  fullName: x.name,
                   Interacción: getActEngagement(x),
                 }))}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
                 <YAxis dataKey="name" type="category" width={110} />
-                <Tooltip />
+                <Tooltip
+                  labelFormatter={(label, payload) =>
+                    payload?.[0]?.payload?.fullName ?? label
+                  }
+                />
                 <Bar dataKey="Interacción" fill="#205e50" />
               </BarChart>
             </ResponsiveContainer>
@@ -738,8 +925,10 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
             <ResponsiveContainer width="100%" height={Math.max(250, mentions.length * 45)}>
               <BarChart
                 layout="vertical"
+                margin={{ top: 12, right: 24, bottom: 8, left: 8 }}
                 data={mentions.map((x) => ({
-                  name: x.name.split(" ").slice(0, 2).join(" "),
+                  name: chartDisplayName(x.name),
+                  fullName: x.name,
                   ...(convPlatformFilter === "all"
                     ? { X: x.mentionsX, Instagram: x.mentionsInstagram }
                     : convPlatformFilter === "x"
@@ -750,7 +939,11 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
                 <YAxis type="category" dataKey="name" width={110} />
-                <Tooltip />
+                <Tooltip
+                  labelFormatter={(label, payload) =>
+                    payload?.[0]?.payload?.fullName ?? label
+                  }
+                />
                 <Legend />
                 {(convPlatformFilter === "all" || convPlatformFilter === "x") && (
                   <Bar dataKey="X" stackId="a" fill="#263d48" />
@@ -765,63 +958,14 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           <ChartCard
             title="Participación en la conversación ministerial"
             rows={sovDonutData.map((x) => ({
-              ministro: x.name,
+              ministro: x.fullName,
               share_of_voice: x.value,
             }))}
           >
-            <ResponsiveContainer width="100%" height={Math.max(350, sovDonutData.length * 24)}>
-              <PieChart>
-                <Pie
-                  data={sovDonutData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="42%"
-                  cy="50%"
-                  innerRadius="52%"
-                  outerRadius="76%"
-                  paddingAngle={3}
-                  isAnimationActive={false}
-                  labelLine={false}
-                  label={sovLabel}
-                >
-                  {sovDonutData.map((x, index) => (
-                    <Cell
-                      key={x.accountId}
-                      fill={
-                        x.name === "Otros"
-                          ? "#64748b"
-                          : PIE_COLORS[index % PIE_COLORS.length]
-                      }
-                    />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                <Legend verticalAlign="middle" align="right" layout="vertical" />
-                <text
-                  x="42%"
-                  y="47%"
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="#17231f"
-                  fontSize={20}
-                  fontWeight={700}
-                  fontFamily="Arial, Helvetica, sans-serif"
-                >
-                  {formatNumber(totalConvMentionsFiltered)}
-                </text>
-                <text
-                  x="42%"
-                  y="57%"
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="#526962"
-                  fontSize={11}
-                  fontFamily="Arial, Helvetica, sans-serif"
-                >
-                  menciones
-                </text>
-              </PieChart>
-            </ResponsiveContainer>
+            <SovDonutChart
+              data={sovDonutData}
+              total={totalConvMentionsFiltered}
+            />
           </ChartCard>
         </div>
       </Section>
@@ -833,14 +977,15 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
             rows={sentiment}
           >
             <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
+              <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                 <Pie
                   data={sentiment}
                   dataKey="value"
                   nameKey="name"
                   innerRadius={60}
                   outerRadius={100}
-                  label
+                  labelLine={false}
+                  label={sentimentSliceLabel}
                 >
                   {sentiment.map((x) => (
                     <Cell
@@ -932,7 +1077,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
             insight="Eje X: Net Sentiment (%) = porcentaje positivo menos porcentaje negativo. Un valor negativo indica predominio negativo y uno positivo, predominio positivo. Eje Y: volumen total del tema (publicaciones + comentarios). El tamaño de la burbuja representa interacción."
           >
             <ResponsiveContainer width="100%" height={360}>
-              <ScatterChart margin={{ top: 20, right: 24, bottom: 55, left: 45 }}>
+              <ScatterChart margin={{ top: 28, right: 40, bottom: 62, left: 56 }}>
                 <CartesianGrid />
                 <XAxis
                   type="number"

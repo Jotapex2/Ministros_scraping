@@ -93,7 +93,7 @@ export function ChartCard({
           </Button>
         </div>
       </div>
-      {children}
+      <div className="chart-viewport">{children}</div>
       {showData && (
         <div className="table-wrap" data-export-ignore>
           <table className="data-table">
