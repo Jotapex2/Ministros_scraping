@@ -14,7 +14,44 @@ export interface LocalInstagramPost {
   url?: string;
 }
 
+export interface LocalInstagramProfile {
+  username: string;
+  fullName?: string;
+  followersCount?: number;
+}
+
+export interface LocalInstagramAccountData {
+  profile: LocalInstagramProfile;
+  posts: LocalInstagramPost[];
+}
+
 type AnyObject = Record<string, unknown>;
+
+async function closeBrowserSafely(browser: any) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    browser.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, 3000);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+}
+
+async function settlePendingSafely(
+  pending: Set<Promise<void>>,
+  timeoutMs = 4000,
+) {
+  if (!pending.size) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled([...pending]),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+}
 
 function checkInstagramSession(page: any) {
   const url = page.url();
@@ -39,6 +76,72 @@ function nestedCount(value: unknown): number | undefined {
     return numeric((value as AnyObject).count);
   }
   return numeric(value);
+}
+
+function profileFromJson(
+  json: unknown,
+  username: string,
+): LocalInstagramProfile | undefined {
+  const cleanUser = username.toLowerCase();
+  const seen = new WeakSet<object>();
+  let fallback: LocalInstagramProfile | undefined;
+
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || depth > 16) return;
+    if (seen.has(value as object)) return;
+    seen.add(value as object);
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+
+    const record = value as AnyObject;
+    const candidateUsername = String(record.username ?? "").replace(/^@/, "");
+    if (candidateUsername.toLowerCase() === cleanUser) {
+      const followersCount =
+        numeric(record.follower_count) ??
+        numeric(record.followers_count) ??
+        numeric(record.followersCount) ??
+        nestedCount(record.edge_followed_by) ??
+        nestedCount(record.followers);
+      const candidate = {
+        username: candidateUsername,
+        fullName:
+          String(record.full_name ?? record.fullName ?? "") || undefined,
+        followersCount,
+      };
+      if (followersCount != null) fallback = candidate;
+      else fallback ??= candidate;
+    }
+
+    for (const child of Object.values(record)) visit(child, depth + 1);
+  };
+
+  visit(json, 0);
+  return fallback;
+}
+
+function parseProfileMeta(
+  content: string,
+  username: string,
+): LocalInstagramProfile | undefined {
+  const match = content.match(/([\d.,]+)\s*(K|M|mil|mill[oó]n(?:es)?)?\s+(?:followers|seguidores)/i);
+  if (!match) return undefined;
+  const suffix = match[2]?.toLowerCase();
+  const decimalText = match[1].replace(",", ".");
+  const decimal = Number(
+    decimalText.split(".").length > 2
+      ? decimalText.replace(/\.(?=.*\.)/g, "")
+      : decimalText,
+  );
+  const followersCount = suffix
+    ? Math.round(
+        decimal *
+          (suffix === "k" || suffix === "mil" ? 1_000 : 1_000_000),
+      )
+    : Number(match[1].replace(/[.,]/g, ""));
+  if (!Number.isFinite(followersCount)) return undefined;
+  return { username, followersCount };
 }
 
 function extractNodes(json: unknown): AnyObject[] {
@@ -128,12 +231,11 @@ function mapPost(node: AnyObject, username: string): LocalInstagramPost | null {
   };
 }
 
-export const localInstagram = {
-  getAccountPosts: async (
+async function scrapeAccount(
     username: string,
     limit = 20,
     sinceTime?: number,
-  ) => {
+  ): Promise<LocalInstagramAccountData> {
     const cleanUser = username.replace(/^@/, "").trim();
     const { browser, context } = await getScraperContext("instagram");
 
@@ -141,8 +243,16 @@ export const localInstagram = {
       const page = await context.newPage();
       const posts = new Map<string, LocalInstagramPost>();
       const pendingResponses = new Set<Promise<void>>();
+      let profile: LocalInstagramProfile = { username: cleanUser };
 
       const collect = (json: unknown) => {
+        const foundProfile = profileFromJson(json, cleanUser);
+        if (
+          foundProfile &&
+          (profile.followersCount == null || foundProfile.followersCount != null)
+        ) {
+          profile = { ...profile, ...foundProfile };
+        }
         for (const node of extractNodes(json)) {
           const post = mapPost(node, cleanUser);
           if (
@@ -181,6 +291,23 @@ export const localInstagram = {
       await page.waitForTimeout(3500);
       checkInstagramSession(page);
 
+      // La respuesta de publicaciones normalmente no incluye seguidores. Esta
+      // consulta usa la misma sesión y origen ya abiertos por Playwright.
+      const webProfile = await page
+        .evaluate(async (profileUsername) => {
+          const response = await fetch(
+            `/api/v1/users/web_profile_info/?username=${encodeURIComponent(profileUsername)}`,
+            {
+              credentials: "include",
+              headers: { "x-ig-app-id": "936619743392459" },
+            },
+          );
+          if (!response.ok) return null;
+          return response.json();
+        }, cleanUser)
+        .catch(() => null);
+      if (webProfile) collect(webProfile);
+
       // Algunas respuestas iniciales están embebidas en scripts y no pasan por
       // el listener de red cuando Instagram reutiliza caché.
       const embedded = await page
@@ -193,13 +320,24 @@ export const localInstagram = {
         } catch {}
       }
 
+      if (profile.followersCount == null) {
+        const metaContent = await page
+          .locator('meta[property="og:description"]')
+          .getAttribute("content")
+          .catch(() => null);
+        const metaProfile = metaContent
+          ? parseProfileMeta(metaContent, cleanUser)
+          : undefined;
+        if (metaProfile) profile = { ...profile, ...metaProfile };
+      }
+
       const maxScrolls = Math.min(30, Math.max(6, Math.ceil(limit / 6) + 4));
       let previousCount = posts.size;
       let stagnantScrolls = 0;
       for (let i = 0; i < maxScrolls; i++) {
         await page.evaluate(() => window.scrollBy(0, 1600));
         await page.waitForTimeout(1600);
-        await Promise.allSettled([...pendingResponses]);
+        await settlePendingSafely(pendingResponses);
 
         stagnantScrolls = posts.size > previousCount ? 0 : stagnantScrolls + 1;
         previousCount = posts.size;
@@ -220,21 +358,35 @@ export const localInstagram = {
       }
 
       await page.waitForTimeout(500);
-      await Promise.allSettled([...pendingResponses]);
-      return [...posts.values()]
+      await settlePendingSafely(pendingResponses);
+      const sortedPosts = [...posts.values()]
+        .map((post) => ({
+          ...post,
+          ownerFollowers: post.ownerFollowers ?? profile.followersCount,
+        }))
         .sort(
           (a, b) =>
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         )
         .slice(0, limit);
+      return { profile, posts: sortedPosts };
     } catch (error) {
       throw new Error(
         `Error en scraper local de Instagram (@${cleanUser}): ${error instanceof Error ? error.message : "Error desconocido"}`,
       );
     } finally {
-      await browser.close().catch(() => undefined);
+      await closeBrowserSafely(browser);
     }
-  },
+  }
+
+export const localInstagram = {
+  getAccountData: scrapeAccount,
+
+  getAccountPosts: async (
+    username: string,
+    limit = 20,
+    sinceTime?: number,
+  ) => (await scrapeAccount(username, limit, sinceTime)).posts,
 
   getAllAccountsPosts: async (usernames: string[], limitPerAccount = 20) => {
     const allPosts: LocalInstagramPost[] = [];

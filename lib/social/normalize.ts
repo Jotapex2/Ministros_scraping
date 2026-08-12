@@ -121,10 +121,29 @@ export function normalizeProfile(
     platform,
     username:
       cleanUsername(
-        text(pick(raw, ["userName", "username", "ownerUsername"])),
+        text(
+          pick(raw, [
+            "userName",
+            "username",
+            "ownerUsername",
+            "author.userName",
+            "author.username",
+          ]),
+        ),
       ) || account[platform === "x" ? "xUsername" : "instagramUsername"],
     followers: available(
-      num(pick(raw, ["followers", "followersCount", "edge_followed_by.count"])),
+      num(
+        pick(raw, [
+          "followers",
+          "followersCount",
+          "follower_count",
+          "followers_count",
+          "edge_followed_by.count",
+          "ownerFollowers",
+          "author.followers",
+          "author.followersCount",
+        ]),
+      ),
     ),
     capturedAt: new Date().toISOString(),
   };

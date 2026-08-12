@@ -27,6 +27,12 @@ const schema = z.discriminatedUnion("action", [
     limit: z.number().int().min(1).max(500).optional(),
     sinceTime: z.number().int().optional(),
   }),
+  z.object({
+    action: z.literal("account_data"),
+    username: z.string().min(1).max(100),
+    limit: z.number().int().min(1).max(500).optional(),
+    sinceTime: z.number().int().optional(),
+  }),
 ]);
 
 export async function POST(request: Request) {
@@ -39,6 +45,19 @@ export async function POST(request: Request) {
 
   try {
     const body = schema.parse(await request.json());
+
+    if (body.action === "account_data") {
+      const data = await localInstagram.getAccountData(
+        body.username,
+        body.limit,
+        body.sinceTime,
+      );
+      return NextResponse.json({
+        ok: true,
+        data,
+        source: "local_playwright_instagram",
+      });
+    }
 
     if (body.action === "account_posts") {
       const items = await localInstagram.getAccountPosts(

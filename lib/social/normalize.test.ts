@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { deduplicatePosts, normalizePost } from "./normalize";
+import {
+  deduplicatePosts,
+  normalizePost,
+  normalizeProfile,
+} from "./normalize";
+import type { AccountConfig } from "@/types/social";
+
+const account = {
+  id: "ministro",
+  name: "Ministro",
+  position: "Cartera",
+  ministry: "Ministerio",
+  accountType: "minister",
+  xUsername: "ministro_x",
+  instagramUsername: "ministro_ig",
+  aliases: [],
+  active: true,
+} satisfies AccountConfig;
 
 describe("social normalization", () => {
   it("normalizes TwitterAPI.io fields", () => {
@@ -24,5 +41,22 @@ describe("social normalization", () => {
       "instagram",
     )!;
     expect(deduplicatePosts([item, item])).toHaveLength(1);
+  });
+
+  it("normalizes profile followers from X and Instagram scraper fields", () => {
+    expect(
+      normalizeProfile(
+        { author: { userName: "ministro_x", followersCount: 33_992 } },
+        "x",
+        account,
+      ).followers.value,
+    ).toBe(33_992);
+    expect(
+      normalizeProfile(
+        { username: "ministro_ig", followersCount: 92_739 },
+        "instagram",
+        account,
+      ).followers.value,
+    ).toBe(92_739);
   });
 });

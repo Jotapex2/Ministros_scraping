@@ -71,9 +71,12 @@ export function calculateMetrics(
     const opinions =
       counts.positive + counts.negative + counts.neutral + counts.uncertain;
     const profile = (platform: "x" | "instagram") =>
-      profiles.find(
-        (item) => item.accountId === account.id && item.platform === platform,
-      )?.followers.value;
+      profiles
+        .filter(
+          (item) => item.accountId === account.id && item.platform === platform,
+        )
+        .map((item) => item.followers.value)
+        .find((value) => value != null);
     const basic = own.reduce((sum, post) => sum + engagementBasic(post), 0);
     return {
       accountId: account.id,

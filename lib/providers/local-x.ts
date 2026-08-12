@@ -20,6 +20,89 @@ export interface LocalXTweet {
 
 type AnyObject = Record<string, unknown>;
 
+async function closeBrowserSafely(browser: any) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    browser.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, 3000);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+}
+
+async function settlePendingSafely(
+  pending: Set<Promise<void>>,
+  timeoutMs = 4000,
+) {
+  if (!pending.size) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled([...pending]),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+}
+
+async function publicXProfile(username: string) {
+  try {
+    const response = await fetch(
+      `https://api.vxtwitter.com/${encodeURIComponent(username)}`,
+      {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(8000),
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) return null;
+    const raw = (await response.json()) as AnyObject;
+    const followersCount = Number(raw.followers_count);
+    if (!Number.isFinite(followersCount)) return null;
+    return {
+      username: String(raw.screen_name ?? username),
+      name: String(raw.name ?? username),
+      followersCount,
+      description:
+        typeof raw.description === "string" ? raw.description : undefined,
+      profileImageUrl:
+        typeof raw.profile_image_url === "string"
+          ? raw.profile_image_url
+          : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseCompactCount(value: string): number | undefined {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ");
+  const match = normalized.match(/([\d.,]+)\s*(mil|k|m|mill[oó]n(?:es)?)?/i);
+  if (!match) return undefined;
+
+  const suffix = match[2]?.toLowerCase();
+  if (suffix) {
+    const decimalText = match[1].replace(",", ".");
+    const decimal = Number(
+      decimalText.split(".").length > 2
+        ? decimalText.replace(/\.(?=.*\.)/g, "")
+        : decimalText,
+    );
+    if (!Number.isFinite(decimal)) return undefined;
+    return Math.round(
+      decimal * (suffix === "mil" || suffix === "k" ? 1_000 : 1_000_000),
+    );
+  }
+
+  const integer = Number(match[1].replace(/[.,]/g, ""));
+  return Number.isFinite(integer) ? integer : undefined;
+}
+
 function checkXSession(page: any) {
   const url = page.url();
   if (url.includes("/login") || url.includes("/flow/login") || url.includes("/account/access")) {
@@ -163,56 +246,88 @@ function collectTweets(
 export const localX = {
   profile: async (username: string) => {
     const cleanUser = username.replace(/^@/, "").trim();
+    const publicProfile = await publicXProfile(cleanUser);
+    if (publicProfile) return publicProfile;
+
     const { browser, context } = await getScraperContext("x");
 
     try {
       const page = await context.newPage();
       let capturedProfile: Record<string, unknown> | null = null;
+      const pendingProfileResponses = new Set<Promise<void>>();
 
-      page.on("response", async (response: any) => {
+      page.on("response", (response: any) => {
         const url = response.url();
         if (url.includes("/UserByScreenName") || url.includes("/UserDetail")) {
-          try {
-            const json = await response.json();
-            const result = json?.data?.user?.result;
-            if (result) {
-              const user = newUserStats(result) ?? legacyUserStats(result);
-              const bio = result.profile_bio as AnyObject | undefined;
-              capturedProfile = {
-                username: user?.userName ?? cleanUser,
-                name: user?.name ?? cleanUser,
-                followersCount: user?.followersCount ?? 0,
-                description:
-                  typeof bio?.description === "string"
-                    ? bio.description
-                    : undefined,
-                profileImageUrl:
-                  (result.avatar as AnyObject | undefined)?.image_url ?? "",
-              };
-            }
-          } catch {}
+          const task = (async () => {
+            try {
+              const json = await response.json();
+              const result = json?.data?.user?.result;
+              if (result) {
+                const user = newUserStats(result) ?? legacyUserStats(result);
+                const bio = result.profile_bio as AnyObject | undefined;
+                capturedProfile = {
+                  username: user?.userName ?? cleanUser,
+                  name: user?.name ?? cleanUser,
+                  followersCount: user?.followersCount,
+                  description:
+                    typeof bio?.description === "string"
+                      ? bio.description
+                      : undefined,
+                  profileImageUrl:
+                    (result.avatar as AnyObject | undefined)?.image_url ?? "",
+                };
+              }
+            } catch {}
+          })();
+          pendingProfileResponses.add(task);
+          void task.finally(() => pendingProfileResponses.delete(task));
         }
       });
 
       await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForTimeout(3000);
       checkXSession(page);
+      await settlePendingSafely(pendingProfileResponses);
 
-      if (!capturedProfile) {
-        // Fallback DOM extraction
-        const followersText = await page.locator('a[href*="/verified_followers"] span, a[href*="/followers"] span').first().innerText().catch(() => "0");
-        const followersNum = parseInt(followersText.replace(/[^0-9]/g, "")) || 0;
+      const resolvedProfile = capturedProfile as Record<string, unknown> | null;
+      if (
+        !resolvedProfile ||
+        typeof resolvedProfile.followersCount !== "number"
+      ) {
+        const followersLocator = page
+          .locator(
+            'a[href$="/verified_followers"], a[href$="/followers"]',
+          )
+          .first();
+        await followersLocator
+          .waitFor({ state: "visible", timeout: 5000 })
+          .catch(() => undefined);
+        const followersTitle = await followersLocator
+          .locator("[title]")
+          .first()
+          .getAttribute("title")
+          .catch(() => null);
+        const followersLabel = await followersLocator
+          .getAttribute("aria-label")
+          .catch(() => null);
+        const followersText = await followersLocator.innerText().catch(() => "");
+        const followersCount = [followersTitle, followersLabel, followersText]
+          .filter((value): value is string => !!value)
+          .map(parseCompactCount)
+          .find((value) => value != null);
         capturedProfile = {
           username: cleanUser,
           name: cleanUser,
-          followersCount: followersNum,
+          ...(resolvedProfile ?? {}),
+          ...(followersCount == null ? {} : { followersCount }),
         };
       }
 
-      await browser.close();
+      await closeBrowserSafely(browser);
       return capturedProfile;
     } catch (error) {
-      await browser.close();
+      await closeBrowserSafely(browser);
       throw new Error(`Error en scraper local de X (perfil @${cleanUser}): ${error instanceof Error ? error.message : "Error desconocido"}`);
     }
   },
@@ -258,7 +373,7 @@ export const localX = {
       for (let i = 0; i < maxScrolls; i++) {
         await page.evaluate(() => window.scrollBy(0, 1500));
         await page.waitForTimeout(1800);
-        await Promise.allSettled([...pendingResponses]);
+        await settlePendingSafely(pendingResponses);
 
         const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
         stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
@@ -275,7 +390,7 @@ export const localX = {
         }
       }
       await page.waitForTimeout(750);
-      await Promise.allSettled([...pendingResponses]);
+      await settlePendingSafely(pendingResponses);
 
       // Deduplicate tweets by id
       const uniqueMap = new Map<string, LocalXTweet>();
@@ -283,10 +398,10 @@ export const localX = {
         uniqueMap.set(t.id, t);
       }
 
-      await browser.close();
+      await closeBrowserSafely(browser);
       return { tweets: Array.from(uniqueMap.values()), next_cursor: "" };
     } catch (error) {
-      await browser.close();
+      await closeBrowserSafely(browser);
       throw new Error(`Error en scraper local de X (timeline @${cleanUser}): ${error instanceof Error ? error.message : "Error desconocido"}`);
     }
   },
@@ -319,10 +434,10 @@ export const localX = {
         uniqueMap.set(r.id, r);
       }
 
-      await browser.close();
+      await closeBrowserSafely(browser);
       return { replies: Array.from(uniqueMap.values()), next_cursor: "" };
     } catch (error) {
-      await browser.close();
+      await closeBrowserSafely(browser);
       return { replies: [], next_cursor: "" };
     }
   },
@@ -365,23 +480,23 @@ export const localX = {
       for (let i = 0; i < maxScrolls; i++) {
         await page.evaluate(() => window.scrollBy(0, 1500));
         await page.waitForTimeout(1800);
-        await Promise.allSettled([...pendingResponses]);
+        await settlePendingSafely(pendingResponses);
         const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
         stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
         previousCount = uniqueCount;
         if (uniqueCount >= limit || stagnantScrolls >= 3) break;
       }
-      await Promise.allSettled([...pendingResponses]);
+      await settlePendingSafely(pendingResponses);
 
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const t of tweets) {
         uniqueMap.set(t.id, t);
       }
 
-      await browser.close();
+      await closeBrowserSafely(browser);
       return { tweets: Array.from(uniqueMap.values()).slice(0, limit) };
     } catch (error) {
-      await browser.close();
+      await closeBrowserSafely(browser);
       throw new Error(
         `Error en búsqueda local de X (${query}): ${error instanceof Error ? error.message : "Error desconocido"}`,
       );

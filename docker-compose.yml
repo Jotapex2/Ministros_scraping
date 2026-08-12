@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: observatorio_digital_scraping
+    init: true
     ports:
       - "3000:3000"
     environment:

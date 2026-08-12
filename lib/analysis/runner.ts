@@ -165,6 +165,20 @@ export async function runAnalysis(
               `X perfil · ${account.name}: ${error instanceof Error ? error.message : "error"}`,
             );
           }
+          const profileObject = profileRaw
+            ? ((profileRaw.data ?? profileRaw.user ?? profileRaw) as Record<
+                string,
+                unknown
+              >)
+            : undefined;
+          const normalizedProfile = profileObject
+            ? normalizeProfile(profileObject, "x", account)
+            : undefined;
+          // El perfil es independiente del timeline. Conservamos seguidores
+          // aunque luego falle la lectura de publicaciones de esta cuenta.
+          if (normalizedProfile?.followers.value != null) {
+            session.profiles.push(normalizedProfile);
+          }
           const firstTimeline = await api(
             "/api/twitter",
               {
@@ -176,12 +190,6 @@ export async function runAnalysis(
               },
             signal,
           );
-          if (profileRaw) {
-            const profileObject = (profileRaw.data ??
-              profileRaw.user ??
-              profileRaw) as Record<string, unknown>;
-            session.profiles.push(normalizeProfile(profileObject, "x", account));
-          }
           const timelineItems = [
             ...rawItems(firstTimeline as Record<string, unknown>, [
               "tweets",
@@ -254,6 +262,18 @@ export async function runAnalysis(
             session.errors.push(
               `X búsqueda por cuenta · ${account.name}: ${error instanceof Error ? error.message : "error"}`,
             );
+          }
+
+          const timelineProfile = timelineItems
+            .map((item) => normalizeProfile(item, "x", account))
+            .find((item) => item.followers.value != null);
+          if (normalizedProfile?.followers.value == null && timelineProfile) {
+            session.profiles.push(timelineProfile);
+          } else if (
+            normalizedProfile?.followers.value == null &&
+            normalizedProfile
+          ) {
+            session.profiles.push(normalizedProfile);
           }
 
           const posts = timelineItems
@@ -393,16 +413,17 @@ export async function runAnalysis(
         session.stage = `Consultando Instagram · cuenta ${accountIndex + 1} de ${accounts.length} · @${account.instagramUsername}`;
         onUpdate({ ...session });
         try {
-          const items = (await api(
+          const accountData = (await api(
             "/api/apify",
             {
-              action: "account_posts",
+              action: "account_data",
               username: account.instagramUsername,
               limit: config.limits.instagramPostsPerAccount,
               sinceTime: startsAt,
             },
             signal,
-          )) as Record<string, unknown>[];
+          )) as Record<string, unknown>;
+          const items = rawItems(accountData, ["posts"]);
 
           for (const item of items) {
             const normalized = normalizePost(item, "instagram", account);
@@ -413,10 +434,12 @@ export async function runAnalysis(
           }
 
           session.quality.instagram.succeeded++;
-          const firstPost = items[0];
-          if (firstPost) {
+          const instagramProfile = accountData.profile as
+            | Record<string, unknown>
+            | undefined;
+          if (instagramProfile) {
             session.profiles.push(
-              normalizeProfile(firstPost, "instagram", account),
+              normalizeProfile(instagramProfile, "instagram", account),
             );
           }
         } catch (error) {
