@@ -1,0 +1,17 @@
+{
+  "name": "observatorio-instagram-adapter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Actor adaptador de Instagram para Observatorio Digital del Gobierno",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "apify": "^3.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+
+# Next.js build output and caches
+.next/
+out/
+.turbo/
+
+# Vercel local project metadata
+.vercel/
+
+# Environment files and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+!.env.example
+
+# Test and coverage output
+coverage/
+.nyc_output/
+
+# Apify local storage
+.apify_storage/
+apify/**/storage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript and tooling caches
+*.tsbuildinfo
+.eslintcache
+.cache/
+
+# Generated reports and temporary artifacts
+output/
+outputs/
+tmp/
+temp/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local certificates and credentials
+*.pem
+*.key
+*.p12
+*.pfx

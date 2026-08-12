@@ -1,0 +1,48 @@
+{
+  "title": "Configuración de extracción de Instagram",
+  "description": "Extrae publicaciones públicas y las normaliza para el Observatorio Digital del Gobierno.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "directUrls": {
+      "title": "Perfiles de Instagram",
+      "description": "URLs públicas de los perfiles que se analizarán.",
+      "type": "array",
+      "editor": "stringList",
+      "items": {
+        "type": "string"
+      },
+      "prefill": ["https://www.instagram.com/gobiernodechile/"],
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "resultsType": {
+      "title": "Tipo de resultados",
+      "type": "string",
+      "editor": "select",
+      "enum": ["posts"],
+      "enumTitles": ["Publicaciones"],
+      "default": "posts"
+    },
+    "resultsLimit": {
+      "title": "Máximo por perfil",
+      "type": "integer",
+      "editor": "number",
+      "default": 20,
+      "minimum": 1,
+      "maximum": 200
+    },
+    "onlyPostsNewerThan": {
+      "title": "Publicaciones posteriores a",
+      "description": "Fecha ISO o expresión admitida por el scraper.",
+      "type": "string",
+      "editor": "textfield"
+    },
+    "includeComments": {
+      "title": "Incluir comentarios recientes",
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": ["directUrls"]
+}

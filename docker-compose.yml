@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  observatorio-scraping:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: observatorio_digital_scraping
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      - ./.sessions:/app/.sessions
+    restart: unless-stopped
