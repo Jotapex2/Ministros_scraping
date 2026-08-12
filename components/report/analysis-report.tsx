@@ -9,7 +9,9 @@ import {
   pdf,
 } from "@react-pdf/renderer";
 import type { AnalysisSession } from "@/types/analysis";
+import type { MinisterMetric } from "@/types/analysis";
 import { formatNumber, formatPercent } from "@/lib/utils";
+import { wordFrequencies, type WordFrequency } from "@/lib/social/wordcloud";
 
 const styles = StyleSheet.create({
   page: { padding: 42, fontFamily: "Helvetica", fontSize: 9, color: "#18231f" },
@@ -27,13 +29,26 @@ const styles = StyleSheet.create({
   title: { fontSize: 29, lineHeight: 1.08, marginBottom: 18 },
   subtitle: { fontSize: 13, color: "#d8dfdb", marginBottom: 44 },
   section: { fontSize: 17, marginBottom: 14, color: "#142b26" },
+  sectionSubtitle: {
+    fontSize: 8,
+    color: "#66726d",
+    marginTop: -9,
+    marginBottom: 13,
+  },
+  subsection: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    marginBottom: 8,
+    color: "#142b26",
+  },
   row: {
     flexDirection: "row",
     borderBottom: "1 solid #dce2df",
     paddingVertical: 7,
   },
   header: { backgroundColor: "#edf0ee", fontFamily: "Helvetica-Bold" },
-  cell: { flex: 1, paddingRight: 6 },
+  cell: { flex: 1, paddingHorizontal: 4 },
+  compactRow: { paddingVertical: 4, fontSize: 7.2 },
   kpis: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   kpi: { width: "31%", border: "1 solid #dce2df", padding: 12 },
   kpiValue: { fontSize: 18, marginTop: 5, color: "#8b5e27" },
@@ -53,10 +68,84 @@ const styles = StyleSheet.create({
   bar: { height: 8, backgroundColor: "#286b5b", marginTop: 3 },
   red: { backgroundColor: "#a9483f" },
   gray: { backgroundColor: "#8a9490" },
+  twoColumns: { flexDirection: "row", gap: 16 },
+  chartPanel: {
+    flex: 1,
+    border: "1 solid #dce2df",
+    padding: 10,
+    minHeight: 250,
+  },
+  chartRow: { marginBottom: 8 },
+  chartLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    fontSize: 7,
+    marginBottom: 2,
+  },
+  chartTrack: { height: 9, backgroundColor: "#edf0ee" },
+  chartX: { height: 9, backgroundColor: "#263d48" },
+  chartInstagram: { height: 9, backgroundColor: "#8d5265" },
+  chartGreen: { height: 9, backgroundColor: "#205e50" },
+  legend: { flexDirection: "row", gap: 12, marginTop: 8, fontSize: 7 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
+  legendSwatch: { width: 7, height: 7 },
+  scatter: {
+    position: "relative",
+    height: 320,
+    marginTop: 8,
+    marginLeft: 34,
+    marginBottom: 24,
+    borderLeft: "1 solid #526962",
+    borderBottom: "1 solid #526962",
+    backgroundColor: "#fbfcfb",
+  },
+  scatterPoint: {
+    position: "absolute",
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#0f766e",
+    border: "1 solid #ffffff",
+  },
+  scatterLabel: {
+    position: "absolute",
+    width: 72,
+    fontSize: 5.5,
+    textAlign: "center",
+    color: "#18231f",
+  },
+  axisLabelX: {
+    position: "absolute",
+    bottom: 22,
+    left: 170,
+    fontSize: 7,
+    color: "#526962",
+  },
+  axisLabelY: {
+    position: "absolute",
+    left: 42,
+    top: 215,
+    fontSize: 7,
+    color: "#526962",
+  },
+  wordCloudRow: { flexDirection: "row", gap: 12 },
+  wordCloudPanel: {
+    flex: 1,
+    minHeight: 315,
+    border: "1 solid #dce2df",
+    padding: 11,
+  },
+  wordWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 12,
+  },
 });
 const Footer = () => (
   <View style={styles.footer} fixed>
-    <Text>Observatorio Digital del Gobierno · Fuente: APIs configuradas</Text>
+    <Text>Observatorio Digital del Gobierno - Fuentes: X e Instagram</Text>
     <Text
       render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`}
     />
@@ -65,22 +154,36 @@ const Footer = () => (
 const Table = ({
   headers,
   rows,
+  widths,
+  compact = false,
 }: {
   headers: string[];
   rows: (string | number)[][];
+  widths?: number[];
+  compact?: boolean;
 }) => (
   <View>
-    <View style={[styles.row, styles.header]}>
-      {headers.map((header) => (
-        <Text key={header} style={styles.cell}>
+    <View style={[styles.row, styles.header, compact ? styles.compactRow : {}]} wrap={false}>
+      {headers.map((header, index) => (
+        <Text
+          key={header}
+          style={[styles.cell, widths ? { flex: widths[index] } : {}]}
+        >
           {header}
         </Text>
       ))}
     </View>
-    {rows.slice(0, 12).map((row, i) => (
-      <View key={i} style={styles.row}>
+    {rows.map((row, i) => (
+      <View
+        key={i}
+        style={[styles.row, compact ? styles.compactRow : {}]}
+        wrap={false}
+      >
         {row.map((value, j) => (
-          <Text key={j} style={styles.cell}>
+          <Text
+            key={j}
+            style={[styles.cell, widths ? { flex: widths[j] } : {}]}
+          >
             {String(value)}
           </Text>
         ))}
@@ -89,9 +192,188 @@ const Table = ({
   </View>
 );
 
+const Legend = () => (
+  <View style={styles.legend}>
+    <View style={styles.legendItem}>
+      <View style={[styles.legendSwatch, { backgroundColor: "#263d48" }]} />
+      <Text>X</Text>
+    </View>
+    <View style={styles.legendItem}>
+      <View style={[styles.legendSwatch, { backgroundColor: "#8d5265" }]} />
+      <Text>Instagram</Text>
+    </View>
+  </View>
+);
+
+const RankedBars = ({
+  title,
+  items,
+  mode,
+}: {
+  title: string;
+  items: MinisterMetric[];
+  mode: "posts" | "engagement" | "mentions" | "sov";
+}) => {
+  const value = (item: MinisterMetric) =>
+    mode === "posts"
+      ? item.postsX + item.postsInstagram
+      : mode === "engagement"
+        ? item.engagement
+        : mode === "mentions"
+          ? item.mentionsX + item.mentionsInstagram
+          : item.shareOfVoice;
+  const maximum = Math.max(1, ...items.map(value));
+  return (
+    <View style={styles.chartPanel}>
+      <Text style={styles.subsection}>{title}</Text>
+      {items.map((item) => {
+        const total = value(item);
+        const xShare =
+          mode === "posts"
+            ? item.postsX / Math.max(1, total)
+            : mode === "mentions"
+              ? item.mentionsX / Math.max(1, total)
+              : 1;
+        const width = `${Math.max(1, (total / maximum) * 100)}%`;
+        return (
+          <View key={item.accountId} style={styles.chartRow} wrap={false}>
+            <View style={styles.chartLabelRow}>
+              <Text>{item.name}</Text>
+              <Text>
+                {mode === "sov" ? formatPercent(total) : formatNumber(total)}
+              </Text>
+            </View>
+            <View style={styles.chartTrack}>
+              {mode === "posts" || mode === "mentions" ? (
+                <View style={{ flexDirection: "row", width }}>
+                  <View style={[styles.chartX, { width: `${xShare * 100}%` }]} />
+                  <View
+                    style={[
+                      styles.chartInstagram,
+                      { width: `${(1 - xShare) * 100}%` },
+                    ]}
+                  />
+                </View>
+              ) : (
+                <View style={[styles.chartGreen, { width }]} />
+              )}
+            </View>
+          </View>
+        );
+      })}
+      {(mode === "posts" || mode === "mentions") && <Legend />}
+    </View>
+  );
+};
+
+const ImpactScatter = ({ items }: { items: MinisterMetric[] }) => {
+  const maxPosts = Math.max(1, ...items.map((item) => item.postsX + item.postsInstagram));
+  const maxAverage = Math.max(1, ...items.map((item) => item.averageEngagement));
+  return (
+    <View>
+      <Text style={styles.axisLabelY}>Engagement promedio / publicación</Text>
+      <View style={styles.scatter}>
+        {items.map((item) => {
+          const posts = item.postsX + item.postsInstagram;
+          const left = Math.min(94, Math.max(1, (posts / maxPosts) * 94));
+          const bottom = Math.min(
+            94,
+            Math.max(1, (item.averageEngagement / maxAverage) * 94),
+          );
+          return (
+            <React.Fragment key={item.accountId}>
+              <View
+                style={[
+                  styles.scatterPoint,
+                  { left: `${left}%`, bottom: `${bottom}%` },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.scatterLabel,
+                  {
+                    left: `${Math.max(0, left - 7)}%`,
+                    bottom: `${Math.min(96, bottom + 3)}%`,
+                  },
+                ]}
+              >
+                {item.name.split(" ").slice(0, 2).join(" ")}
+              </Text>
+            </React.Fragment>
+          );
+        })}
+      </View>
+      <Text style={styles.axisLabelX}>Publicaciones propias</Text>
+    </View>
+  );
+};
+
+const WordCloud = ({
+  title,
+  words,
+  color,
+}: {
+  title: string;
+  words: WordFrequency[];
+  color: string;
+}) => (
+  <View style={styles.wordCloudPanel}>
+    <Text style={styles.subsection}>{title}</Text>
+    <View style={styles.wordWrap}>
+      {words.map((word) => (
+        <Text
+          key={word.word}
+          style={{
+            color,
+            fontSize: 7 + word.score * 12,
+            marginHorizontal: 3,
+            marginVertical: 3,
+          }}
+        >
+          {word.word}
+        </Text>
+      ))}
+    </View>
+  </View>
+);
+
 export function AnalysisReport({ session }: { session: AnalysisSession }) {
   const metrics = session.metrics;
-  const rankings = [...(metrics?.ministerRankings ?? [])];
+  const rankings = metrics?.ministerRankings ?? [];
+  const byPosts = [...rankings].sort(
+    (a, b) =>
+      b.postsX + b.postsInstagram - (a.postsX + a.postsInstagram),
+  );
+  const byEngagement = [...rankings].sort(
+    (a, b) => b.engagement - a.engagement,
+  );
+  const byFollowers = [...rankings].sort(
+    (a, b) =>
+      (b.followersX ?? 0) +
+      (b.followersInstagram ?? 0) -
+      (a.followersX ?? 0) -
+      (a.followersInstagram ?? 0),
+  );
+  const byMentions = [...rankings].sort(
+    (a, b) =>
+      b.mentionsX +
+      b.mentionsInstagram -
+      (a.mentionsX + a.mentionsInstagram),
+  );
+  const bySov = [...rankings].sort(
+    (a, b) => b.shareOfVoice - a.shareOfVoice,
+  );
+  const positiveWords = wordFrequencies(
+    session.posts,
+    session.sentiments,
+    "positive",
+  );
+  const negativeWords = wordFrequencies(
+    session.posts,
+    session.sentiments,
+    "negative",
+  );
+  const totalWords = wordFrequencies(session.posts);
   const sentimentTotal = metrics
     ? Object.values(metrics.governmentSentiment).reduce((a, b) => a + b, 0)
     : 0;
@@ -109,7 +391,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           Análisis de conversación y desempeño digital en X e Instagram
         </Text>
         <Text>
-          Período: {session.config.startDate} — {session.config.endDate}
+          Período: {session.config.startDate} - {session.config.endDate}
         </Text>
         <Text>Generado: {new Date().toLocaleString("es-CL")}</Text>
       </Page>
@@ -169,57 +451,180 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
         <Footer />
       </Page>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.section}>Actividad e interacción ministerial</Text>
-        <Table
-          headers={[
-            "Ministro",
-            "Posts",
-            "Interacción",
-            "Promedio",
-            "Seguidores X",
-            "Seguidores IG",
-          ]}
-          rows={rankings
-            .sort((a, b) => b.engagement - a.engagement)
-            .map((m) => [
-              m.name,
-              m.postsX + m.postsInstagram,
-              formatNumber(m.engagement),
-              formatNumber(Math.round(m.averageEngagement)),
-              formatNumber(m.followersX),
-              formatNumber(m.followersInstagram),
-            ])}
-        />
+        <Text style={styles.section}>Actividad e impacto ministerial</Text>
+        <Text style={styles.sectionSubtitle}>
+          Rankings considerando X e Instagram; ordenados de mayor a menor.
+        </Text>
+        <View style={styles.twoColumns}>
+          <RankedBars
+            title="Ministros que más publicaron"
+            items={byPosts.slice(0, 10)}
+            mode="posts"
+          />
+          <RankedBars
+            title="Ministros con mayor interacción"
+            items={byEngagement.slice(0, 10)}
+            mode="engagement"
+          />
+        </View>
         <Text style={styles.note}>
-          Seguidores agregados por plataforma; una persona puede seguir al
-          ministro en más de una red.
+          Interacción principal = likes + comentarios. El ranking visual muestra
+          los primeros 10; el detalle incluye todos los ministros.
         </Text>
         <Footer />
       </Page>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.section}>Menciones y Share of Voice</Text>
+        <Text style={styles.section}>Detalle de actividad ministerial</Text>
+        <Text style={styles.sectionSubtitle}>
+          Publicaciones e interacción de todos los ministros observados.
+        </Text>
         <Table
-          headers={["Ministro", "X", "Instagram", "SOV", "Net sentiment"]}
-          rows={rankings
-            .sort(
-              (a, b) =>
-                b.mentionsX +
-                b.mentionsInstagram -
-                a.mentionsX -
-                a.mentionsInstagram,
-            )
-            .map((m) => [
-              m.name,
-              m.mentionsX,
-              m.mentionsInstagram,
-              formatPercent(m.shareOfVoice),
-              formatPercent(m.netSentiment),
-            ])}
+          headers={[
+            "Ministro",
+            "X",
+            "Instagram",
+            "Total posts",
+            "Interacción",
+            "Promedio/post",
+          ]}
+          rows={byPosts.map((m) => [
+            m.name,
+            m.postsX,
+            m.postsInstagram,
+            m.postsX + m.postsInstagram,
+            formatNumber(m.engagement),
+            formatNumber(Math.round(m.averageEngagement)),
+          ])}
+          widths={[2.2, 0.6, 0.8, 0.8, 0.9, 0.9]}
+          compact
         />
         <Footer />
       </Page>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.section}>Sentimiento hacia el Gobierno</Text>
+        <Text style={styles.section}>Actividad vs impacto</Text>
+        <Text style={styles.sectionSubtitle}>
+          Eje X: publicaciones propias. Eje Y: engagement promedio por
+          publicación. Se muestran todos los ministros con actividad observada.
+        </Text>
+        <ImpactScatter
+          items={byPosts.filter(
+            (item) => item.postsX + item.postsInstagram > 0,
+          ).slice(0, 10)}
+        />
+        <Text style={styles.note}>
+          La posición refleja actividad y promedio de interacción; el detalle
+          completo se presenta en la página siguiente.
+        </Text>
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Detalle de actividad vs impacto</Text>
+        <Text style={styles.sectionSubtitle}>
+          Valores utilizados para construir el gráfico de dispersión.
+        </Text>
+        <Table
+          headers={[
+            "Ministro",
+            "Publicaciones",
+            "Engagement/post",
+            "Menciones",
+            "Seguidores agregados",
+          ]}
+          rows={byPosts.map((m) => [
+            m.name,
+            m.postsX + m.postsInstagram,
+            formatNumber(Math.round(m.averageEngagement)),
+            m.mentionsX + m.mentionsInstagram,
+            m.followersX == null && m.followersInstagram == null
+              ? "N/D"
+              : formatNumber((m.followersX ?? 0) + (m.followersInstagram ?? 0)),
+          ])}
+          widths={[2.2, 0.9, 1, 0.8, 1.2]}
+          compact
+        />
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Seguidores</Text>
+        <Text style={styles.sectionSubtitle}>
+          Agregados por plataforma; una persona puede seguir al ministro en más
+          de una red.
+        </Text>
+        <Table
+          headers={[
+            "Ministro",
+            "Seguidores X",
+            "Seguidores Instagram",
+            "Total agregado",
+          ]}
+          rows={byFollowers.map((m) => [
+            m.name,
+            m.followersX == null ? "N/D" : formatNumber(m.followersX),
+            m.followersInstagram == null
+              ? "N/D"
+              : formatNumber(m.followersInstagram),
+            m.followersX == null && m.followersInstagram == null
+              ? "N/D"
+              : formatNumber((m.followersX ?? 0) + (m.followersInstagram ?? 0)),
+          ])}
+          widths={[2.3, 1, 1.2, 1]}
+          compact
+        />
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Conversación ministerial</Text>
+        <Text style={styles.sectionSubtitle}>
+          Rankings y participación en menciones ministeriales.
+        </Text>
+        <View style={styles.twoColumns}>
+          <RankedBars
+            title="Ministros más mencionados"
+            items={byMentions.slice(0, 10)}
+            mode="mentions"
+          />
+          <RankedBars
+            title="Participación en la conversación"
+            items={bySov.slice(0, 10)}
+            mode="sov"
+          />
+        </View>
+        <Text style={styles.note}>
+          El ranking visual muestra los primeros 10. La participación se calcula
+          sobre el total de menciones ministeriales recuperadas.
+        </Text>
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Detalle de conversación ministerial</Text>
+        <Text style={styles.sectionSubtitle}>
+          Menciones, participación y autores únicos de todos los ministros.
+        </Text>
+        <Table
+          headers={[
+            "Ministro",
+            "X",
+            "Instagram",
+            "Total",
+            "SOV",
+            "Usuarios",
+          ]}
+          rows={byMentions.map((m) => [
+            m.name,
+            m.mentionsX,
+            m.mentionsInstagram,
+            m.mentionsX + m.mentionsInstagram,
+            formatPercent(m.shareOfVoice),
+            m.uniqueAuthors,
+          ])}
+          widths={[2.2, 0.6, 0.8, 0.7, 0.8, 0.8]}
+          compact
+        />
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Sentimiento</Text>
+        <Text style={styles.subsection}>Sentimiento general hacia el Gobierno</Text>
         {metrics &&
           (["positive", "neutral", "negative", "uncertain"] as const).map(
             (key) => {
@@ -245,9 +650,22 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
               );
             },
           )}
+        <Text style={[styles.subsection, { marginTop: 16 }]}>Sentimiento por ministro</Text>
+        <Table
+          headers={["Ministro", "+", "-", "Neutral", "Incierto", "Net"]}
+          rows={byMentions.map((m) => [
+            m.name,
+            m.positive,
+            m.negative,
+            m.neutral,
+            m.uncertain,
+            formatPercent(m.netSentiment),
+          ])}
+          widths={[2.4, 0.5, 0.5, 0.7, 0.7, 0.8]}
+          compact
+        />
         <Text style={styles.note}>
-          Clasificación automatizada mediante DeepSeek; puede contener errores
-          de interpretación.
+          Clasificación automatizada mediante {session.config.llmProvider === "ollama" ? `Ollama (${session.config.ollamaModel ?? "modelo local"})` : "DeepSeek"}; puede contener errores de interpretación.
         </Text>
         <Footer />
       </Page>
@@ -274,11 +692,36 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
         <Footer />
       </Page>
       <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Nubes de palabras</Text>
+        <Text style={styles.sectionSubtitle}>
+          Términos más frecuentes por pieza; se excluyen palabras funcionales,
+          URLs, menciones y hashtags.
+        </Text>
+        <View style={styles.wordCloudRow}>
+          <WordCloud
+            title="Nube positiva"
+            words={positiveWords}
+            color="#176b59"
+          />
+          <WordCloud
+            title="Nube negativa"
+            words={negativeWords}
+            color="#b34135"
+          />
+          <WordCloud title="Nube total" words={totalWords} color="#2879d8" />
+        </View>
+        <Text style={styles.note}>
+          El tamaño representa frecuencia relativa dentro de cada nube. La nube
+          total considera todas las piezas recuperadas.
+        </Text>
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
         <Text style={styles.section}>Metodología y fuentes</Text>
         <Text style={styles.bullet}>
-          Publicaciones y comentarios se normalizan desde TwitterAPI.io y los
-          Actors Apify configurados. Los duplicados se eliminan por plataforma e
-          identificador.
+          Publicaciones, perfiles y comentarios se recuperan mediante los
+          scrapers locales configurados para X e Instagram. Los duplicados se
+          eliminan por plataforma e identificador.
         </Text>
         <Text style={styles.bullet}>
           Engagement principal = likes + comentarios. Engagement ampliado agrega
@@ -294,8 +737,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           y políticas públicas.
         </Text>
         <Text style={styles.bullet}>
-          Los temas son agrupaciones semánticas etiquetadas por DeepSeek; los
-          volúmenes se calculan en código.
+          Sentimiento y temas se clasifican mediante {session.config.llmProvider === "ollama" ? `Ollama (${session.config.ollamaModel ?? "modelo local"})` : "DeepSeek"}; los volúmenes y rankings se calculan en código.
         </Text>
         <Text style={styles.note}>
           Extracción: {session.createdAt}. Plataformas:{" "}
