@@ -336,7 +336,8 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
       : []),
   ];
 
-  const topicScatter = session.topics.map((t) => ({
+  const topicScatter = session.topics.map((t, index) => ({
+    rank: index + 1,
     name: t.topicName,
     x: t.netSentiment,
     y: t.posts + t.comments,
@@ -916,26 +917,55 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
 
           <ChartCard
             title="Volumen y sentimiento de los principales temas"
+            subtitle="Cada número corresponde a la misma fila numerada en Ver datos."
             rows={topicScatter.map((x) => ({
+              numero: x.rank,
               tema: x.name,
               net_sentiment: x.x,
               volumen: x.y,
               engagement: x.z,
             }))}
+            insight="Eje X: Net Sentiment (%) = porcentaje positivo menos porcentaje negativo. Un valor negativo indica predominio negativo y uno positivo, predominio positivo. Eje Y: volumen total del tema (publicaciones + comentarios). El tamaño de la burbuja representa interacción."
           >
             <ResponsiveContainer width="100%" height={360}>
-              <ScatterChart>
+              <ScatterChart margin={{ top: 20, right: 24, bottom: 55, left: 45 }}>
                 <CartesianGrid />
                 <XAxis
                   type="number"
                   dataKey="x"
                   domain={[-100, 100]}
                   name="Net Sentiment"
+                  tickFormatter={(value) => `${value}%`}
+                  label={{
+                    value: "Eje X: Net Sentiment (%) = % positivo - % negativo",
+                    position: "insideBottom",
+                    offset: -32,
+                    style: { fill: "#334155", fontSize: 11, fontWeight: 600 },
+                  }}
                 />
-                <YAxis type="number" dataKey="y" name="Volumen" />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  name="Volumen"
+                  label={{
+                    value: "Eje Y: publicaciones + comentarios",
+                    angle: -90,
+                    position: "insideLeft",
+                    offset: -28,
+                    style: { fill: "#334155", fontSize: 11, fontWeight: 600 },
+                  }}
+                />
                 <ZAxis type="number" dataKey="z" range={[80, 800]} name="Interacción" />
                 <Tooltip />
-                <Scatter data={topicScatter} fill="#205e50" />
+                <Scatter data={topicScatter} fill="#205e50">
+                  <LabelList
+                    dataKey="rank"
+                    position="center"
+                    fill="#ffffff"
+                    fontSize={11}
+                    fontWeight={700}
+                  />
+                </Scatter>
               </ScatterChart>
             </ResponsiveContainer>
           </ChartCard>

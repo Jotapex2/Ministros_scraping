@@ -48,28 +48,33 @@ describe("executive PDF", () => {
       "comunidad",
     ];
     session.posts = ministerAccounts.flatMap((account, index) =>
-      (["x", "instagram"] as const).map(
-        (platform, platformIndex): SocialPost => ({
-          id: `${account.id}-${platform}`,
-          platform,
-          authorName: account.name,
-          username:
-            account[platform === "x" ? "xUsername" : "instagramUsername"],
-          authorType: "minister",
-          accountId: account.id,
-          ministerId: account.id,
-          text: `${index % 3 === 0 ? "Excelente avance" : index % 3 === 1 ? "Crítica por retraso" : "Información oficial"} en ${words[index % words.length]} para Chile, familias y comunidad. Martín Arrau presentó la agenda.`,
-          createdAt: `2026-08-0${(index % 7) + 1}T12:00:00Z`,
-          likes: available(1000 + index * 137 + platformIndex * 250),
-          comments: available(40 + index * 7),
-          shares: available(10 + index),
-          reposts: available(8 + index),
-          quotes: available(index),
-          views: available(5000 + index * 100),
-          followers: available(5000 + index * 12345),
-          url: `https://example.com/${account.id}/${platform}`,
-          hashtags: [],
-        }),
+      (["x", "instagram"] as const).flatMap((platform, platformIndex) =>
+        Array.from(
+          { length: (index % 5) + 1 },
+          (_, pieceIndex): SocialPost => ({
+            id: `${account.id}-${platform}-${pieceIndex}`,
+            platform,
+            authorName: account.name,
+            username:
+              account[platform === "x" ? "xUsername" : "instagramUsername"],
+            authorType: "minister",
+            accountId: account.id,
+            ministerId: account.id,
+            text: `${index % 3 === 0 ? "Excelente avance" : index % 3 === 1 ? "Crítica por retraso" : "Información oficial"} en ${words[index % words.length]} para Chile, familias y comunidad. ${account.xUsername ? `@${account.xUsername}` : `@${account.instagramUsername}`} presentó la agenda.`,
+            createdAt: `2026-08-0${(index % 7) + 1}T12:0${pieceIndex}:00Z`,
+            likes: available(
+              1000 + index * 137 + platformIndex * 250 + pieceIndex * 31,
+            ),
+            comments: available(40 + index * 7 + pieceIndex),
+            shares: available(10 + index),
+            reposts: available(8 + index),
+            quotes: available(index),
+            views: available(5000 + index * 100),
+            followers: available(5000 + index * 12345),
+            url: `https://example.com/${account.id}/${platform}/${pieceIndex}`,
+            hashtags: [],
+          }),
+        ),
       ),
     );
     session.profiles = ministerAccounts.flatMap((account, index) => [
@@ -109,6 +114,7 @@ describe("executive PDF", () => {
         entities: ["Chile"],
       }),
     );
+    session.quality.deepseek.processed = session.sentiments.length;
     session.topics = words.slice(0, 10).map((word, index) => ({
       id: word,
       topicName: word[0].toUpperCase() + word.slice(1),
@@ -131,9 +137,22 @@ describe("executive PDF", () => {
     expect(output.subarray(0, 4).toString()).toBe("%PDF");
     expect(output.length).toBeGreaterThan(15_000);
     if (process.env.WRITE_REPORT_FIXTURE === "1") {
-      const directory = path.join(process.cwd(), "tmp", "pdfs");
-      await mkdir(directory, { recursive: true });
-      await writeFile(path.join(directory, "analysis-report-fixture.pdf"), output);
+      const temporaryDirectory = path.join(process.cwd(), "tmp", "pdfs");
+      const outputDirectory = path.join(process.cwd(), "output", "pdf");
+      await Promise.all([
+        mkdir(temporaryDirectory, { recursive: true }),
+        mkdir(outputDirectory, { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(
+          path.join(temporaryDirectory, "analysis-report-fixture.pdf"),
+          output,
+        ),
+        writeFile(
+          path.join(outputDirectory, "informe_observatorio_revision.pdf"),
+          output,
+        ),
+      ]);
     }
   });
 });

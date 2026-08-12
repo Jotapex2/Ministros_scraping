@@ -114,6 +114,59 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: "#18231f",
   },
+  topicScatter: {
+    position: "relative",
+    height: 300,
+    marginTop: 12,
+    marginLeft: 38,
+    marginRight: 10,
+    marginBottom: 32,
+    borderLeft: "1 solid #526962",
+    borderBottom: "1 solid #526962",
+    backgroundColor: "#fbfcfb",
+  },
+  topicGridVertical: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    borderLeft: "0.5 solid #dce2df",
+  },
+  topicGridHorizontal: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    borderTop: "0.5 solid #dce2df",
+  },
+  topicTickX: {
+    position: "absolute",
+    bottom: -13,
+    width: 34,
+    marginLeft: -17,
+    fontSize: 6,
+    textAlign: "center",
+    color: "#526962",
+  },
+  topicTickY: {
+    position: "absolute",
+    left: -34,
+    width: 29,
+    marginBottom: -3,
+    fontSize: 6,
+    textAlign: "right",
+    color: "#526962",
+  },
+  topicPoint: {
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#205e50",
+    border: "1 solid #ffffff",
+  },
+  topicPointNumber: {
+    color: "#ffffff",
+    fontFamily: "Helvetica-Bold",
+    fontSize: 6,
+  },
   axisLabelX: {
     position: "absolute",
     bottom: 22,
@@ -304,6 +357,86 @@ const ImpactScatter = ({ items }: { items: MinisterMetric[] }) => {
         })}
       </View>
       <Text style={styles.axisLabelX}>Publicaciones propias</Text>
+    </View>
+  );
+};
+
+const TopicScatter = ({ topics }: { topics: AnalysisSession["topics"] }) => {
+  const maxVolume = Math.max(
+    1,
+    ...topics.map((topic) => topic.posts + topic.comments),
+  );
+  const maxEngagement = Math.max(1, ...topics.map((topic) => topic.engagement));
+  const xTicks = [-100, -50, 0, 50, 100];
+  const yTicks = [0, 0.25, 0.5, 0.75, 1];
+  return (
+    <View>
+      <View style={styles.topicScatter}>
+        {xTicks.map((tick) => {
+          const left = ((tick + 100) / 200) * 100;
+          return (
+            <React.Fragment key={`x-${tick}`}>
+              <View style={[styles.topicGridVertical, { left: `${left}%` }]} />
+              <Text style={[styles.topicTickX, { left: `${left}%` }]}>
+                {tick}%
+              </Text>
+            </React.Fragment>
+          );
+        })}
+        {yTicks.map((ratio) => {
+          const volume = Math.round(maxVolume * ratio);
+          return (
+            <React.Fragment key={`y-${ratio}`}>
+              <View
+                style={[styles.topicGridHorizontal, { bottom: `${ratio * 100}%` }]}
+              />
+              <Text style={[styles.topicTickY, { bottom: `${ratio * 100}%` }]}>
+                {volume}
+              </Text>
+            </React.Fragment>
+          );
+        })}
+        {topics.map((topic, index) => {
+          const volume = topic.posts + topic.comments;
+          const size = 13 + (topic.engagement / maxEngagement) * 14;
+          const left = Math.min(
+            97,
+            Math.max(3, ((topic.netSentiment + 100) / 200) * 100),
+          );
+          const bottom = Math.min(
+            96,
+            Math.max(3, (volume / maxVolume) * 100),
+          );
+          return (
+            <View
+              key={`${topic.topicName}-${index}`}
+              style={[
+                styles.topicPoint,
+                {
+                  left: `${left}%`,
+                  bottom: `${bottom}%`,
+                  width: size,
+                  height: size,
+                  borderRadius: size / 2,
+                  marginLeft: -size / 2,
+                  marginBottom: -size / 2,
+                },
+              ]}
+            >
+              <Text style={styles.topicPointNumber}>{index + 1}</Text>
+            </View>
+          );
+        })}
+      </View>
+      <Text style={[styles.axisLabelX, { bottom: 17, left: 155 }]}>
+        Eje X: Net Sentiment (%) = % positivo - % negativo
+      </Text>
+      <Text style={styles.note}>
+        Eje Y: volumen del tema (publicaciones + comentarios). Cada burbuja
+        lleva el número de su fila en la tabla; su tamaño representa la
+        interacción. Un valor X negativo indica predominio de sentimiento
+        negativo y uno positivo, predominio positivo.
+      </Text>
     </View>
   );
 };
@@ -671,8 +804,17 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
       </Page>
       <Page size="A4" style={styles.page}>
         <Text style={styles.section}>Temas principales</Text>
+        <Text style={styles.sectionSubtitle}>
+          Volumen y sentimiento neto de los principales temas.
+        </Text>
+        <TopicScatter topics={session.topics} />
+        <Footer />
+      </Page>
+      <Page size="A4" style={styles.page}>
+        <Text style={styles.section}>Detalle de temas principales</Text>
         <Table
           headers={[
+            "N°",
             "Tema",
             "Posts",
             "Comentarios",
@@ -680,7 +822,8 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
             "Interacción",
             "Net sentiment",
           ]}
-          rows={session.topics.map((t) => [
+          rows={session.topics.map((t, index) => [
+            index + 1,
             t.topicName,
             t.posts,
             t.comments,
@@ -688,6 +831,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
             t.engagement,
             formatPercent(t.netSentiment),
           ])}
+          widths={[0.35, 2.5, 0.6, 0.8, 0.7, 0.8, 0.9]}
         />
         <Footer />
       </Page>
