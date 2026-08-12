@@ -58,3 +58,4 @@ Desktop.ini
 *.p12
 *.pfx
 .sessions/ollama-models.json
+.sessions/ollama-models.json
