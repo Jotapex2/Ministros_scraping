@@ -83,8 +83,8 @@ export function ConfigurationClient() {
       </section>
       <div className="toolbar">
         <Button
-          onClick={() => {
-            setAccounts(draft);
+          onClick={async () => {
+            await setAccounts(draft);
             alert("Cuentas guardadas en este navegador.");
           }}
         >
@@ -137,11 +137,11 @@ export function ConfigurationClient() {
         </Button>
         <Button
           variant="ghost"
-          onClick={() => {
+          onClick={async () => {
             if (confirm("¿Restaurar las 22 cuentas originales del CSV?")) {
-              clearAccounts();
+              await clearAccounts();
               setDraft(defaultAccounts);
-              setAccounts(defaultAccounts);
+              await setAccounts(defaultAccounts);
             }
           }}
         >

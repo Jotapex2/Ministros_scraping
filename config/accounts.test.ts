@@ -15,11 +15,11 @@ describe("default government accounts", () => {
       expect.arrayContaining(["mindefchile", "MinjuDDHH"]),
     );
     expect(
-      ministers.find((account) => account.name === "Fernando Barros Tocornal")
+      ministers.find((account) => account.name === "Fernando Barros")
         ?.xUsername,
     ).toBe("");
     expect(
-      ministers.find((account) => account.name === "Fernando Rabat Celis")
+      ministers.find((account) => account.name === "Fernando Rabat")
         ?.xUsername,
     ).toBe("");
   });

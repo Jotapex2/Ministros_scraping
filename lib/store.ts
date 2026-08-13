@@ -5,7 +5,7 @@ import type { AccountConfig } from "@/types/social";
 import { defaultAccounts } from "@/config/accounts";
 import { format, subDays } from "date-fns";
 import { loadAccounts, saveAccounts } from "@/lib/session/accounts";
-import { clearSession, loadSession } from "@/lib/session/storage";
+import { clearSession, loadSession, saveSession } from "@/lib/session/storage";
 import { runAnalysis } from "@/lib/analysis/runner";
 
 const limits = {
@@ -35,7 +35,7 @@ interface State {
   hydrated: boolean;
   controller?: AbortController;
   setConfig: (patch: Partial<AnalysisConfig>) => void;
-  setAccounts: (accounts: AccountConfig[]) => void;
+  setAccounts: (accounts: AccountConfig[]) => Promise<void>;
   hydrate: () => Promise<void>;
   run: () => Promise<void>;
   cancel: () => void;
@@ -47,9 +47,25 @@ export const useObservatory = create<State>((set, get) => ({
   hydrated: false,
   setConfig: (patch) =>
     set((state) => ({ config: { ...state.config, ...patch } })),
-  setAccounts: (accounts) => {
-    saveAccounts(accounts);
-    set((state) => ({ config: { ...state.config, accounts } }));
+  setAccounts: async (accounts) => {
+    await saveAccounts(accounts);
+    const session = get().session;
+    if (session) {
+      const byId = new Map(accounts.map((account) => [account.id, account]));
+      session.config.accounts = accounts;
+      session.metrics?.ministerRankings.forEach((metric) => {
+        const account = byId.get(metric.accountId);
+        if (account) {
+          metric.name = account.name;
+          metric.position = account.position;
+        }
+      });
+      await saveSession(session);
+    }
+    set((state) => ({
+      config: { ...state.config, accounts },
+      session: session ? { ...session } : undefined,
+    }));
   },
   hydrate: async () => {
     const [session, runtime] = await Promise.all([
@@ -58,10 +74,23 @@ export const useObservatory = create<State>((set, get) => ({
         .then((response) => response.json())
         .catch(() => ({})),
     ]);
+    const accounts = await loadAccounts(defaultAccounts);
+    if (session) {
+      const byId = new Map(accounts.map((account) => [account.id, account]));
+      session.config.accounts = accounts;
+      session.metrics?.ministerRankings.forEach((metric) => {
+        const account = byId.get(metric.accountId);
+        if (account) {
+          metric.name = account.name;
+          metric.position = account.position;
+        }
+      });
+      await saveSession(session);
+    }
     set((state) => ({
       config: {
         ...state.config,
-        accounts: loadAccounts(defaultAccounts),
+        accounts,
         limits: runtime.limits
           ? { ...state.config.limits, ...runtime.limits }
           : state.config.limits,
