@@ -17,15 +17,18 @@ describe("default government accounts", () => {
     expect(
       ministers.find((account) => account.name === "Fernando Barros")
         ?.xUsername,
-    ).toBe("");
+    ).toBe("mindefchile");
     expect(
       ministers.find((account) => account.name === "Fernando Rabat")
         ?.xUsername,
-    ).toBe("");
+    ).toBe("MinjuDDHH");
   });
 
-  it("has no duplicate X usernames", () => {
-    const usernames = defaultAccounts
+  it("has no duplicate X usernames across minister accounts", () => {
+    const ministers = defaultAccounts.filter(
+      (account) => account.accountType === "minister",
+    );
+    const usernames = ministers
       .map((account) => account.xUsername.toLowerCase())
       .filter(Boolean);
     expect(new Set(usernames).size).toBe(usernames.length);

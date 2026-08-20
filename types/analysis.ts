@@ -21,9 +21,6 @@ export interface AnalysisConfig {
     deepseekBatchSize: number;
   };
   deepseekMode: "all" | "1000" | "5000" | "sample";
-  llmProvider?: "deepseek" | "ollama";
-  ollamaHost?: string;
-  ollamaModel?: string;
   apifyInputTemplates?: Partial<Record<Platform, Record<string, unknown>>>;
   apifyFieldMaps?: Partial<Record<Platform, Record<string, string[]>>>;
 }

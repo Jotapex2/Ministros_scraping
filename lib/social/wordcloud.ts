@@ -35,7 +35,10 @@ export function wordFrequencies(
     for (const word of unique)
       if (!STOPWORDS.has(word)) counts.set(word, (counts.get(word) ?? 0) + 1);
   }
-  const max = Math.max(1, ...counts.values());
+  let max = 1;
+  for (const count of counts.values()) {
+    if (count > max) max = count;
+  }
   return [...counts]
     .map(([word, frequency]) => ({ word, frequency, score: frequency / max }))
     .sort((a, b) => b.frequency - a.frequency)

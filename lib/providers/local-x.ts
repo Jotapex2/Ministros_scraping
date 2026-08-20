@@ -20,17 +20,6 @@ export interface LocalXTweet {
 
 type AnyObject = Record<string, unknown>;
 
-async function closeBrowserSafely(browser: any) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    browser.close().catch(() => undefined),
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, 3000);
-    }),
-  ]);
-  if (timeout) clearTimeout(timeout);
-}
-
 async function settlePendingSafely(
   pending: Set<Promise<void>>,
   timeoutMs = 4000,
@@ -249,12 +238,13 @@ export const localX = {
     const publicProfile = await publicXProfile(cleanUser);
     if (publicProfile) return publicProfile;
 
-    const { browser, context } = await getScraperContext("x");
+    const pooled = await getScraperContext("x");
 
     try {
-      const page = await context.newPage();
+      const page = await pooled.context.newPage();
       let capturedProfile: Record<string, unknown> | null = null;
       const pendingProfileResponses = new Set<Promise<void>>();
+      let resolveWait: (() => void) | null = null;
 
       page.on("response", (response: any) => {
         const url = response.url();
@@ -277,6 +267,7 @@ export const localX = {
                   profileImageUrl:
                     (result.avatar as AnyObject | undefined)?.image_url ?? "",
                 };
+                if (resolveWait) resolveWait();
               }
             } catch {}
           })();
@@ -286,7 +277,12 @@ export const localX = {
       });
 
       await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForTimeout(3000);
+
+      await new Promise<void>((resolve) => {
+        resolveWait = resolve;
+        setTimeout(resolve, 3000);
+      });
+
       checkXSession(page);
       await settlePendingSafely(pendingProfileResponses);
 
@@ -324,10 +320,10 @@ export const localX = {
         };
       }
 
-      await closeBrowserSafely(browser);
+      pooled.release();
       return capturedProfile;
     } catch (error) {
-      await closeBrowserSafely(browser);
+      pooled.release();
       throw new Error(`Error en scraper local de X (perfil @${cleanUser}): ${error instanceof Error ? error.message : "Error desconocido"}`);
     }
   },
@@ -340,10 +336,10 @@ export const localX = {
     sinceTime?: number,
   ) => {
     const cleanUser = username.replace(/^@/, "").trim();
-    const { browser, context } = await getScraperContext("x");
+    const pooled = await getScraperContext("x");
 
     try {
-      const page = await context.newPage();
+      const page = await pooled.context.newPage();
       const tweets: LocalXTweet[] = [];
       const pendingResponses = new Set<Promise<void>>();
 
@@ -362,11 +358,10 @@ export const localX = {
       });
 
       await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+
       await page.waitForTimeout(2500);
       checkXSession(page);
 
-      // X carga el timeline por bloques. Seguimos hasta alcanzar la fecha
-      // solicitada, el límite, o hasta que varios scrolls no agreguen datos.
       const maxScrolls = Math.min(40, Math.max(8, Math.ceil(limit / 10) + 4));
       let previousCount = 0;
       let stagnantScrolls = 0;
@@ -378,40 +373,44 @@ export const localX = {
         const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
         stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
         previousCount = uniqueCount;
-        const oldestTime = Math.min(
-          ...tweets.map((tweet) => new Date(tweet.createdAt).getTime()),
-        );
-        if (
-          uniqueCount >= limit ||
-          (sinceTime != null && Number.isFinite(oldestTime) && oldestTime <= sinceTime) ||
-          stagnantScrolls >= 3
-        ) {
+        if (tweets.length > 0) {
+          const oldestTime = Math.min(
+            ...tweets.map((tweet) => new Date(tweet.createdAt).getTime()),
+          );
+          if (
+            uniqueCount >= limit ||
+            (sinceTime != null && Number.isFinite(oldestTime) && oldestTime <= sinceTime) ||
+            stagnantScrolls >= 3
+          ) {
+            break;
+          }
+        } else if (stagnantScrolls >= 3) {
           break;
         }
       }
       await page.waitForTimeout(750);
       await settlePendingSafely(pendingResponses);
 
-      // Deduplicate tweets by id
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const t of tweets) {
         uniqueMap.set(t.id, t);
       }
 
-      await closeBrowserSafely(browser);
+      pooled.release();
       return { tweets: Array.from(uniqueMap.values()), next_cursor: "" };
     } catch (error) {
-      await closeBrowserSafely(browser);
+      pooled.release();
       throw new Error(`Error en scraper local de X (timeline @${cleanUser}): ${error instanceof Error ? error.message : "Error desconocido"}`);
     }
   },
 
   replies: async (tweetId: string, _cursor?: string) => {
-    const { browser, context } = await getScraperContext("x");
+    const pooled = await getScraperContext("x");
 
     try {
-      const page = await context.newPage();
+      const page = await pooled.context.newPage();
       const replies: LocalXTweet[] = [];
+      let resolveWait: (() => void) | null = null;
 
       page.on("response", async (response: any) => {
         const url = response.url();
@@ -419,12 +418,18 @@ export const localX = {
           try {
             const json = await response.json();
             collectTweets(json as AnyObject, replies);
+            if (resolveWait) resolveWait();
           } catch {}
         }
       });
 
       await page.goto(`https://x.com/i/status/${tweetId}`, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForTimeout(3500);
+
+      await new Promise<void>((resolve) => {
+        resolveWait = resolve;
+        setTimeout(resolve, 3500);
+      });
+
       checkXSession(page);
 
       const uniqueMap = new Map<string, LocalXTweet>();
@@ -434,10 +439,10 @@ export const localX = {
         uniqueMap.set(r.id, r);
       }
 
-      await closeBrowserSafely(browser);
+      pooled.release();
       return { replies: Array.from(uniqueMap.values()), next_cursor: "" };
     } catch (error) {
-      await closeBrowserSafely(browser);
+      pooled.release();
       return { replies: [], next_cursor: "" };
     }
   },
@@ -448,10 +453,10 @@ export const localX = {
     _untilTime: number,
     limit = 100,
   ) => {
-    const { browser, context } = await getScraperContext("x");
+    const pooled = await getScraperContext("x");
 
     try {
-      const page = await context.newPage();
+      const page = await pooled.context.newPage();
       const tweets: LocalXTweet[] = [];
       const pendingResponses = new Set<Promise<void>>();
 
@@ -471,6 +476,7 @@ export const localX = {
 
       const searchUrl = `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+
       await page.waitForTimeout(3000);
       checkXSession(page);
 
@@ -493,10 +499,10 @@ export const localX = {
         uniqueMap.set(t.id, t);
       }
 
-      await closeBrowserSafely(browser);
+      pooled.release();
       return { tweets: Array.from(uniqueMap.values()).slice(0, limit) };
     } catch (error) {
-      await closeBrowserSafely(browser);
+      pooled.release();
       throw new Error(
         `Error en búsqueda local de X (${query}): ${error instanceof Error ? error.message : "Error desconocido"}`,
       );

@@ -9,5 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    include: ["components/**/*.test.{ts,tsx}", "config/**/*.test.{ts,tsx}", "lib/**/*.test.{ts,tsx}"],
+    exclude: ["node_modules", ".next", "apify/**"],
   },
 });

@@ -26,14 +26,26 @@ const emptySentiment = () => ({
   uncertain: 0,
 });
 
+function top(items: SocialPost[]): SocialPost | undefined {
+  let best: SocialPost | undefined;
+  let bestLikes = -1;
+  for (const item of items) {
+    const likes = numeric(item.likes);
+    if (likes > bestLikes) {
+      bestLikes = likes;
+      best = item;
+    }
+  }
+  return best;
+}
+
 export function calculateMetrics(
   posts: SocialPost[],
   profiles: SocialProfileSnapshot[],
   sentiments: SentimentResult[],
   accounts: AccountConfig[],
-  topics: TopicResult[] = [],
+  _topics: TopicResult[] = [],
 ): AnalysisMetrics {
-  void topics;
   const sentimentById = new Map(sentiments.map((item) => [item.itemId, item]));
   const governmentSentiment = emptySentiment();
   const sentiment = emptySentiment();
@@ -46,23 +58,51 @@ export function calculateMetrics(
     )
       governmentSentiment[result.sentiment]++;
   }
+
   const mentions = new Map(
     posts.map((post) => [post.id, mentionedAccounts(post, accounts)]),
   );
+
   const ministerAccounts = accounts.filter(
     (account) => account.active && account.accountType === "minister",
   );
+
   const totalMinisterMentions = [...mentions.values()].reduce(
     (sum, ids) => sum + ids.length,
     0,
   );
+
+  const ownByAccount = new Map<string, SocialPost[]>();
+  for (const post of posts) {
+    if (post.isComment || !post.accountId) continue;
+    const list = ownByAccount.get(post.accountId);
+    if (list) list.push(post);
+    else ownByAccount.set(post.accountId, [post]);
+  }
+
+  const citedByAccount = new Map<string, SocialPost[]>();
+  for (const post of posts) {
+    const mentionIds = mentions.get(post.id);
+    if (!mentionIds?.length) continue;
+    for (const accountId of mentionIds) {
+      const list = citedByAccount.get(accountId);
+      if (list) list.push(post);
+      else citedByAccount.set(accountId, [post]);
+    }
+  }
+
+  const profileByAccountPlatform = new Map<string, number | undefined>();
+  for (const p of profiles) {
+    const key = `${p.accountId}:${p.platform}`;
+    const existing = profileByAccountPlatform.get(key);
+    if (existing == null || p.followers.value != null) {
+      profileByAccountPlatform.set(key, p.followers.value);
+    }
+  }
+
   const ministerRankings: MinisterMetric[] = ministerAccounts.map((account) => {
-    const own = posts.filter(
-      (post) => post.accountId === account.id && !post.isComment,
-    );
-    const cited = posts.filter((post) =>
-      mentions.get(post.id)?.includes(account.id),
-    );
+    const own = ownByAccount.get(account.id) ?? [];
+    const cited = citedByAccount.get(account.id) ?? [];
     const sentimentsForMinister = cited
       .map((post) => sentimentById.get(post.id))
       .filter(Boolean) as SentimentResult[];
@@ -70,38 +110,47 @@ export function calculateMetrics(
     sentimentsForMinister.forEach((item) => counts[item.sentiment]++);
     const opinions =
       counts.positive + counts.negative + counts.neutral + counts.uncertain;
-    const profile = (platform: "x" | "instagram") =>
-      profiles
-        .filter(
-          (item) => item.accountId === account.id && item.platform === platform,
-        )
-        .map((item) => item.followers.value)
-        .find((value) => value != null);
-    const basic = own.reduce((sum, post) => sum + engagementBasic(post), 0);
+
+    let postsX = 0;
+    let postsInstagram = 0;
+    let likesX = 0;
+    let commentsX = 0;
+    let likesInstagram = 0;
+    let commentsInstagram = 0;
+    let mentionsX = 0;
+    let mentionsInstagram = 0;
+    let totalEngagement = 0;
+    for (const post of own) {
+      totalEngagement += engagementBasic(post);
+      if (post.platform === "x") {
+        postsX++;
+        likesX += numeric(post.likes);
+        commentsX += numeric(post.comments);
+      } else {
+        postsInstagram++;
+        likesInstagram += numeric(post.likes);
+        commentsInstagram += numeric(post.comments);
+      }
+    }
+    for (const post of cited) {
+      if (post.platform === "x") mentionsX++;
+      else mentionsInstagram++;
+    }
+
     return {
       accountId: account.id,
       name: account.name,
       position: account.position,
-      postsX: own.filter((post) => post.platform === "x").length,
-      postsInstagram: own.filter((post) => post.platform === "instagram")
-        .length,
-      likesX: own
-        .filter((post) => post.platform === "x")
-        .reduce((sum, post) => sum + numeric(post.likes), 0),
-      commentsX: own
-        .filter((post) => post.platform === "x")
-        .reduce((sum, post) => sum + numeric(post.comments), 0),
-      likesInstagram: own
-        .filter((post) => post.platform === "instagram")
-        .reduce((sum, post) => sum + numeric(post.likes), 0),
-      commentsInstagram: own
-        .filter((post) => post.platform === "instagram")
-        .reduce((sum, post) => sum + numeric(post.comments), 0),
-      engagement: basic,
-      averageEngagement: own.length ? basic / own.length : 0,
-      mentionsX: cited.filter((post) => post.platform === "x").length,
-      mentionsInstagram: cited.filter((post) => post.platform === "instagram")
-        .length,
+      postsX,
+      postsInstagram,
+      likesX,
+      commentsX,
+      likesInstagram,
+      commentsInstagram,
+      engagement: totalEngagement,
+      averageEngagement: own.length ? totalEngagement / own.length : 0,
+      mentionsX,
+      mentionsInstagram,
       uniqueAuthors: new Set(
         cited.map((post) => `${post.platform}:${post.username}`),
       ).size,
@@ -109,67 +158,87 @@ export function calculateMetrics(
       netSentiment: opinions
         ? (counts.positive / opinions - counts.negative / opinions) * 100
         : 0,
-      followersX: profile("x"),
-      followersInstagram: profile("instagram"),
+      followersX: profileByAccountPlatform.get(`${account.id}:x`),
+      followersInstagram: profileByAccountPlatform.get(
+        `${account.id}:instagram`,
+      ),
       shareOfVoice: totalMinisterMentions
         ? (cited.length / totalMinisterMentions) * 100
         : 0,
     };
   });
+
+  const postsByPlatform = new Map<string, SocialPost[]>();
+  for (const post of posts) {
+    const list = postsByPlatform.get(post.platform);
+    if (list) list.push(post);
+    else postsByPlatform.set(post.platform, [post]);
+  }
+
+  const sentimentByItemId = new Set(sentiments.map((r) => r.itemId));
+
   const platformMetrics = Object.fromEntries(
     (["x", "instagram"] as const).map((platform) => {
-      const items = posts.filter((post) => post.platform === platform);
+      const items = postsByPlatform.get(platform) ?? [];
       const s = emptySentiment();
-      sentiments
-        .filter((result) => items.some((item) => item.id === result.itemId))
-        .forEach((result) => s[result.sentiment]++);
+      for (const result of sentiments) {
+        if (items.some((item) => item.id === result.itemId)) {
+          s[result.sentiment]++;
+        }
+      }
+      let interactions = 0;
+      let mentionsCount = 0;
+      let nonComments = 0;
+      let commentCount = 0;
+      for (const item of items) {
+        interactions += engagementBasic(item);
+        mentionsCount += mentions.get(item.id)?.length ?? 0;
+        if (item.isComment) commentCount++;
+        else nonComments++;
+      }
       return [
         platform,
         {
-          posts: items.filter((post) => !post.isComment).length,
-          comments: items.filter((post) => post.isComment).length,
-          interactions: items.reduce(
-            (sum, post) => sum + engagementBasic(post),
-            0,
-          ),
-          mentions: items.reduce(
-            (sum, post) => sum + (mentions.get(post.id)?.length ?? 0),
-            0,
-          ),
-          averageEngagement: items.length
-            ? items.reduce((sum, post) => sum + engagementBasic(post), 0) /
-              items.length
-            : 0,
+          posts: nonComments,
+          comments: commentCount,
+          interactions,
+          mentions: mentionsCount,
+          averageEngagement: items.length ? interactions / items.length : 0,
           sentiment: s,
         },
       ];
     }),
   ) as AnalysisMetrics["platformMetrics"];
+
   const institutional = posts.filter(
     (post) => post.authorType === "institutional" && !post.isComment,
   );
-  const top = (items: SocialPost[]) =>
-    [...items].sort((a, b) => numeric(b.likes) - numeric(a.likes))[0];
+
+  let publications = 0;
+  let commentCount = 0;
+  let interactionsBasic = 0;
+  let interactionsExpanded = 0;
+  const uniqueUsers = new Set<string>();
+  for (const post of posts) {
+    if (post.isComment) commentCount++;
+    else publications++;
+    interactionsBasic += engagementBasic(post);
+    interactionsExpanded += engagementExpanded(post);
+    uniqueUsers.add(`${post.platform}:${post.username}`);
+  }
+
   return {
-    publications: posts.filter((post) => !post.isComment).length,
-    comments: posts.filter((post) => post.isComment).length,
-    interactionsBasic: posts.reduce(
-      (sum, post) => sum + engagementBasic(post),
-      0,
-    ),
-    interactionsExpanded: posts.reduce(
-      (sum, post) => sum + engagementExpanded(post),
-      0,
-    ),
+    publications,
+    comments: commentCount,
+    interactionsBasic,
+    interactionsExpanded,
     governmentMentions: sentiments.filter((item) =>
       ["government", "president", "institution", "public_policy"].includes(
         item.targetKind,
       ),
     ).length,
     ministerMentions: totalMinisterMentions,
-    uniqueUsers: new Set(
-      posts.map((post) => `${post.platform}:${post.username}`),
-    ).size,
+    uniqueUsers: uniqueUsers.size,
     sentiment,
     governmentSentiment,
     ministerRankings,

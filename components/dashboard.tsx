@@ -557,7 +557,7 @@ export function Dashboard({ session }: { session: AnalysisSession }) {
           ))}
           <Card>
             <span className="kpi-label">
-              {session.config.llmProvider === "ollama" ? "Ollama" : "DeepSeek"}
+              DeepSeek
             </span>
             <div className="kpi-value">
               {session.quality.deepseek.processed}

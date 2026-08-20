@@ -50,7 +50,13 @@ export function DataExplorer() {
     minimumEngagement,
   ]);
 
-  if (!hydrated) return <div className="login">Cargando datos locales…</div>;
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPageItems = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page],
+  );
 
   return (
     <div className="shell">
@@ -78,7 +84,7 @@ export function DataExplorer() {
                 <label>Plataforma</label>
                 <Select
                   value={platform}
-                  onChange={(event) => setPlatform(event.target.value)}
+                  onChange={(event) => { setPlatform(event.target.value); setPage(1); }}
                 >
                   <option value="all">Todas</option>
                   <option value="x">X</option>
@@ -89,7 +95,7 @@ export function DataExplorer() {
                 <label>Sentimiento</label>
                 <Select
                   value={sentiment}
-                  onChange={(event) => setSentiment(event.target.value)}
+                  onChange={(event) => { setSentiment(event.target.value); setPage(1); }}
                 >
                   <option value="all">Todos</option>
                   <option value="positive">Positivo</option>
@@ -102,14 +108,14 @@ export function DataExplorer() {
                 <label>Autor</label>
                 <Input
                   value={author}
-                  onChange={(event) => setAuthor(event.target.value)}
+                  onChange={(event) => { setAuthor(event.target.value); setPage(1); }}
                 />
               </div>
               <div className="field">
                 <label>Palabra</label>
                 <Input
                   value={word}
-                  onChange={(event) => setWord(event.target.value)}
+                  onChange={(event) => { setWord(event.target.value); setPage(1); }}
                 />
               </div>
               <div className="field">
@@ -118,9 +124,10 @@ export function DataExplorer() {
                   type="number"
                   min={0}
                   value={minimumEngagement}
-                  onChange={(event) =>
-                    setMinimumEngagement(Number(event.target.value))
-                  }
+                  onChange={(event) => {
+                    setMinimumEngagement(Number(event.target.value));
+                    setPage(1);
+                  }}
                 />
               </div>
             </div>
@@ -158,7 +165,7 @@ export function DataExplorer() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.slice(0, 500).map((post) => {
+                  {currentPageItems.map((post) => {
                     const result = sentiments.get(post.id);
                     return (
                       <tr key={`${post.platform}:${post.id}`}>
@@ -188,12 +195,27 @@ export function DataExplorer() {
                 </tbody>
               </table>
             </div>
-            {filtered.length > 500 && (
-              <p className="kpi-meta">
-                La vista muestra 500 filas; la exportación incluye todos los
-                resultados filtrados.
-              </p>
-            )}
+            <div className="flex items-center justify-between mt-4">
+              <span className="text-xs text-neutral-400">
+                Página {page} de {totalPages} ({filtered.length} total)
+              </span>
+              <div className="flex space-x-2">
+                <Button
+                  variant="outline"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
           </section>
         </>
       )}

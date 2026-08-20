@@ -42,7 +42,9 @@ export function aggregateTopics(
   const groups = new Map<string, typeof assignments>();
   assignments.forEach((item) => {
     const key = slugify(item.topicName);
-    groups.set(key, [...(groups.get(key) ?? []), item]);
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
   });
   return [...groups.entries()]
     .map(([id, items]) => {
@@ -99,16 +101,17 @@ export function finalizeSession(session: AnalysisSession) {
     session.config.accounts,
     session.topics,
   );
-  const rankingPosts = [...session.metrics.ministerRankings].sort(
-    (a, b) => b.postsX + b.postsInstagram - a.postsX - a.postsInstagram,
-  )[0];
-  const rankingEng = [...session.metrics.ministerRankings].sort(
-    (a, b) => b.engagement - a.engagement,
-  )[0];
-  const rankingMentions = [...session.metrics.ministerRankings].sort(
-    (a, b) =>
-      b.mentionsX + b.mentionsInstagram - a.mentionsX - a.mentionsInstagram,
-  )[0];
+  const rankings = session.metrics.ministerRankings;
+  let rankingPosts = rankings[0];
+  let rankingEng = rankings[0];
+  let rankingMentions = rankings[0];
+  for (const r of rankings) {
+    if (r.postsX + r.postsInstagram > (rankingPosts?.postsX ?? 0) + (rankingPosts?.postsInstagram ?? 0))
+      rankingPosts = r;
+    if (r.engagement > (rankingEng?.engagement ?? 0)) rankingEng = r;
+    if (r.mentionsX + r.mentionsInstagram > (rankingMentions?.mentionsX ?? 0) + (rankingMentions?.mentionsInstagram ?? 0))
+      rankingMentions = r;
+  }
   const topTopic = session.topics[0];
   const totalPlatform =
     session.metrics.platformMetrics.x.posts +

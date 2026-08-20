@@ -24,9 +24,6 @@ const defaultConfig = (): AnalysisConfig => ({
   queries: ["Gobierno de Chile"],
   limits,
   deepseekMode: "1000",
-  llmProvider: "deepseek",
-  ollamaHost: "http://127.0.0.1:11434",
-  ollamaModel: "llama3",
   apifyInputTemplates: {},
 });
 interface State {
@@ -102,10 +99,31 @@ export const useObservatory = create<State>((set, get) => ({
   run: async () => {
     const controller = new AbortController();
     set({ controller });
-    await runAnalysis(get().config, controller.signal, (session) =>
-      set({ session }),
-    );
-    set({ controller: undefined });
+    let lastUpdate = 0;
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    const throttledUpdate = (session: AnalysisSession) => {
+      const now = Date.now();
+      if (now - lastUpdate >= 250 || session.status === "completed" || session.status === "error") {
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          pendingTimer = null;
+        }
+        lastUpdate = now;
+        set({ session: { ...session } });
+      } else if (!pendingTimer) {
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null;
+          lastUpdate = Date.now();
+          set({ session: { ...session } });
+        }, 250 - (now - lastUpdate));
+      }
+    };
+    try {
+      await runAnalysis(get().config, controller.signal, throttledUpdate);
+    } finally {
+      if (pendingTimer) clearTimeout(pendingTimer);
+      set({ controller: undefined });
+    }
   },
   cancel: () => get().controller?.abort(),
   reset: async () => {

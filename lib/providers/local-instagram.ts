@@ -27,17 +27,6 @@ export interface LocalInstagramAccountData {
 
 type AnyObject = Record<string, unknown>;
 
-async function closeBrowserSafely(browser: any) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    browser.close().catch(() => undefined),
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, 3000);
-    }),
-  ]);
-  if (timeout) clearTimeout(timeout);
-}
-
 async function settlePendingSafely(
   pending: Set<Promise<void>>,
   timeoutMs = 4000,
@@ -237,13 +226,14 @@ async function scrapeAccount(
     sinceTime?: number,
   ): Promise<LocalInstagramAccountData> {
     const cleanUser = username.replace(/^@/, "").trim();
-    const { browser, context } = await getScraperContext("instagram");
+    const pooled = await getScraperContext("instagram");
 
     try {
-      const page = await context.newPage();
+      const page = await pooled.context.newPage();
       const posts = new Map<string, LocalInstagramPost>();
       const pendingResponses = new Set<Promise<void>>();
       let profile: LocalInstagramProfile = { username: cleanUser };
+      let resolveInitial: (() => void) | null = null;
 
       const collect = (json: unknown) => {
         const foundProfile = profileFromJson(json, cleanUser);
@@ -277,6 +267,7 @@ async function scrapeAccount(
               const contentType = response.headers()["content-type"] ?? "";
               if (!contentType.includes("json")) return;
               collect(await response.json());
+              if (resolveInitial) resolveInitial();
             } catch {}
           })();
           pendingResponses.add(task);
@@ -288,11 +279,14 @@ async function scrapeAccount(
         waitUntil: "domcontentloaded",
         timeout: 45_000,
       });
-      await page.waitForTimeout(3500);
+
+      await new Promise<void>((resolve) => {
+        resolveInitial = resolve;
+        setTimeout(resolve, 3500);
+      });
+
       checkInstagramSession(page);
 
-      // La respuesta de publicaciones normalmente no incluye seguidores. Esta
-      // consulta usa la misma sesión y origen ya abiertos por Playwright.
       const webProfile = await page
         .evaluate(async (profileUsername) => {
           const response = await fetch(
@@ -308,8 +302,6 @@ async function scrapeAccount(
         .catch(() => null);
       if (webProfile) collect(webProfile);
 
-      // Algunas respuestas iniciales están embebidas en scripts y no pasan por
-      // el listener de red cuando Instagram reutiliza caché.
       const embedded = await page
         .locator('script[type="application/json"]')
         .allTextContents()
@@ -341,18 +333,22 @@ async function scrapeAccount(
 
         stagnantScrolls = posts.size > previousCount ? 0 : stagnantScrolls + 1;
         previousCount = posts.size;
-        const oldestTime = Math.min(
-          ...[...posts.values()].map((post) =>
-            new Date(post.createdAt).getTime(),
-          ),
-        );
-        if (
-          posts.size >= limit ||
-          (sinceTime != null &&
-            Number.isFinite(oldestTime) &&
-            oldestTime <= sinceTime) ||
-          stagnantScrolls >= 3
-        ) {
+        if (posts.size > 0) {
+          const oldestTime = Math.min(
+            ...[...posts.values()].map((post) =>
+              new Date(post.createdAt).getTime(),
+            ),
+          );
+          if (
+            posts.size >= limit ||
+            (sinceTime != null &&
+              Number.isFinite(oldestTime) &&
+              oldestTime <= sinceTime) ||
+            stagnantScrolls >= 3
+          ) {
+            break;
+          }
+        } else if (stagnantScrolls >= 3) {
           break;
         }
       }
@@ -375,7 +371,7 @@ async function scrapeAccount(
         `Error en scraper local de Instagram (@${cleanUser}): ${error instanceof Error ? error.message : "Error desconocido"}`,
       );
     } finally {
-      await closeBrowserSafely(browser);
+      pooled.release();
     }
   }
 

@@ -851,7 +851,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           compact
         />
         <Text style={styles.note}>
-          Clasificación automatizada mediante {session.config.llmProvider === "ollama" ? `Ollama (${session.config.ollamaModel ?? "modelo local"})` : "DeepSeek"}; puede contener errores de interpretación.
+          Clasificación automatizada mediante DeepSeek; puede contener errores de interpretación.
         </Text>
         <Footer />
       </Page>
@@ -934,7 +934,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           y políticas públicas.
         </Text>
         <Text style={styles.bullet}>
-          Sentimiento y temas se clasifican mediante {session.config.llmProvider === "ollama" ? `Ollama (${session.config.ollamaModel ?? "modelo local"})` : "DeepSeek"}; los volúmenes y rankings se calculan en código.
+          Sentimiento y temas se clasifican mediante DeepSeek; los volúmenes y rankings se calculan en código.
         </Text>
         <Text style={styles.note}>
           Extracción: {session.createdAt}. Plataformas:{" "}

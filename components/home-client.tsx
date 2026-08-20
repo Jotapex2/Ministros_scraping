@@ -18,7 +18,6 @@ import { generatePdf } from "./report/analysis-report";
 import type { AnalysisSession } from "@/types/analysis";
 import { ComparisonPanel } from "./comparison-panel";
 import { ScraperLoginModal } from "./scraper-login-modal";
-import { OllamaModelField } from "./ollama-model-field";
 export function HomeClient() {
   const {
     config,
@@ -167,51 +166,6 @@ export function HomeClient() {
               </label>
             </div>
           </div>
-          <div className="field">
-            <label>Proveedor IA</label>
-            <Select
-              value={config.llmProvider || "deepseek"}
-              onChange={(e) => {
-                const provider = e.target.value as "deepseek" | "ollama";
-                setConfig({
-                  llmProvider: provider,
-                  ...(provider === "ollama"
-                    ? {
-                        ollamaHost:
-                          config.ollamaHost || "http://127.0.0.1:11434",
-                        ollamaModel: config.ollamaModel || "llama3",
-                      }
-                    : {}),
-                });
-              }}
-            >
-              <option value="deepseek">DeepSeek API (Cloud)</option>
-              <option value="ollama">Ollama (Modelos Locales)</option>
-            </Select>
-          </div>
-          {config.llmProvider === "ollama" && (
-            <>
-              <div className="field">
-                <label>URL Host de Ollama</label>
-                <Input
-                  placeholder="http://127.0.0.1:11434"
-                  value={config.ollamaHost || "http://127.0.0.1:11434"}
-                  onChange={(e) => setConfig({ ollamaHost: e.target.value })}
-                />
-                <p className="kpi-meta">
-                  En Docker usar: http://host.docker.internal:11434
-                </p>
-              </div>
-              <div className="field">
-                <label>Modelo local</label>
-                <OllamaModelField
-                  host={config.ollamaHost}
-                  value={config.ollamaModel || "llama3"}
-                  onChange={(ollamaModel) => setConfig({ ollamaModel })}
-                />
-              </div>
-            </>
-          )}
           <div className="field">
             <label>Límite Análisis IA</label>
             <Select

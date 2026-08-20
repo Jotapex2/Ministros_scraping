@@ -32,7 +32,7 @@ const ministers: MinisterAccountSeed[] = [
     position: "Ministro de Defensa Nacional",
     ministry: "Defensa Nacional",
     instagramUsername: "ministrobarros",
-    xUsername: "",
+    xUsername: "mindefchile",
   },
   {
     name: "Jorge Quiroz",
@@ -87,7 +87,7 @@ const ministers: MinisterAccountSeed[] = [
     position: "Ministro de Justicia y Derechos Humanos",
     ministry: "Justicia y Derechos Humanos",
     instagramUsername: "ministrorabat",
-    xUsername: "",
+    xUsername: "MinjuDDHH",
   },
   {
     name: "Tomás Rau",
@@ -154,12 +154,11 @@ const ministers: MinisterAccountSeed[] = [
     xUsername: "MinistraToledo",
   },
   {
-    name: "Natalia Duco",
-    fullName: "Natalia Duco Soler",
-    position: "Ministra del Deporte",
+    name: "Francisco Riveros",
+    position: "Ministro del Deporte",
     ministry: "Deporte",
-    instagramUsername: "nataliaduco",
-    xUsername: "NataliaDucoSole",
+    instagramUsername: "mindepchile",
+    xUsername: "MindepChile",
   },
   {
     name: "Judith Marín",

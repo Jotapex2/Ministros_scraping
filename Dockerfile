@@ -1,28 +1,66 @@
 # Dockerfile para Observatorio Digital del Gobierno con Webscraping Local (Playwright)
-FROM node:20-bookworm
+FROM node:20-bookworm AS base
 
 WORKDIR /app
 
-# Copiar manifiestos e instalar dependencias de Node
+# Etapa 1: Dependencias de Node
+FROM base AS deps
 COPY package*.json ./
 RUN npm ci
 
-# Instalar navegador Chromium y dependencias de sistema operativo de Linux
-RUN npx playwright install --with-deps chromium
-
-# Copiar el resto del código fuente del proyecto
+# Etapa 2: Builder (Playwright + Next.js build)
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Variables de entorno para producción
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+# Instalar Chromium y dependencias de sistema operativo para Playwright
+RUN npx playwright install --with-deps chromium
+
+# Compilar la aplicación Next.js
+RUN npm run build
+
+# Etapa 3: Runner (Producción)
+FROM base AS runner
+WORKDIR /app
+
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Construir aplicación Next.js
-RUN npm run build
+# Playwright necesita estas librerías del sistema operativo en la imagen final.
+# Se instalan directamente con apt-get para no depender de BuildKit mounts.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnspr4 \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Exponer el puerto 3000
+# Copiar navegadores de Playwright instalados
+COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+
+# Copiar archivos compilados y dependencias de la aplicación
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/apify ./apify
+
 EXPOSE 3000
 
-# Detectar modelos de Ollama y luego iniciar Next.js
-CMD ["node", "scripts/start-with-ollama-check.mjs"]
+CMD ["node", "server.js"]

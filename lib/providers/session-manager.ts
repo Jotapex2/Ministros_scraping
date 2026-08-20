@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium } from "playwright";
+import { browserPool, type PooledContext } from "./browser-pool";
 
 const SESSIONS_DIR = path.join(process.cwd(), ".sessions");
 const X_SESSION_PATH = path.join(SESSIONS_DIR, "x_session.json");
@@ -20,8 +21,8 @@ export interface SessionStatus {
 export interface LoginCredentials {
   username?: string;
   password?: string;
-  cookieAuthToken?: string; // For X auth_token cookie
-  cookieSessionId?: string; // For IG sessionid cookie
+  cookieAuthToken?: string;
+  cookieSessionId?: string;
 }
 
 export async function getSessionStatus(): Promise<SessionStatus> {
@@ -72,38 +73,18 @@ export async function getSessionStatus(): Promise<SessionStatus> {
   };
 }
 
-export async function getScraperContext(platform: "x" | "instagram") {
+export async function getScraperContext(
+  platform: "x" | "instagram",
+): Promise<PooledContext> {
   ensureSessionsDir();
   const sessionPath = platform === "x" ? X_SESSION_PATH : IG_SESSION_PATH;
-
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
-    ],
-  });
-
-  const options: Record<string, unknown> = {
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    viewport: { width: 1280, height: 800 },
-  };
-
-  if (fs.existsSync(sessionPath)) {
-    options.storageState = sessionPath;
-  }
-
-  const context = await browser.newContext(options);
-  return { browser, context, sessionPath };
+  const storageState = fs.existsSync(sessionPath) ? sessionPath : undefined;
+  return browserPool.getPooledContext(storageState);
 }
 
 export async function loginX(credentials: LoginCredentials): Promise<{ success: boolean; error?: string }> {
   ensureSessionsDir();
 
-  // If cookie provided directly:
   if (credentials.cookieAuthToken?.trim()) {
     const token = credentials.cookieAuthToken.trim();
     const cookies = [
@@ -153,11 +134,9 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
     });
     const page = await context.newPage();
 
-    // Navigate to X login
     await page.goto("https://x.com/login", { waitUntil: "domcontentloaded", timeout: 25000 });
     await page.waitForTimeout(3000);
 
-    // Try finding username input field with multiple fallback selectors
     const usernameInput = page.locator('input[autocomplete="username"], input[name="text"], input[type="text"]').first();
     try {
       await usernameInput.waitFor({ state: "visible", timeout: 10000 });
@@ -173,7 +152,6 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
     await page.keyboard.press("Enter");
     await page.waitForTimeout(2500);
 
-    // Check if X requests confirmation phone/unusual check input
     const confirmInput = page.locator('input[data-testid="ocfEnterTextTextInput"]');
     if (await confirmInput.isVisible().catch(() => false)) {
       await confirmInput.fill(credentials.username);
@@ -181,14 +159,12 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
       await page.waitForTimeout(2500);
     }
 
-    // Enter password
     const passwordInput = page.locator('input[name="password"]');
     await passwordInput.waitFor({ state: "visible", timeout: 10000 });
     await passwordInput.fill(credentials.password);
     await page.keyboard.press("Enter");
     await page.waitForTimeout(5000);
 
-    // Verify logged in cookies
     const cookies = await context.cookies();
     const hasAuthToken = cookies.some((c: any) => c.name === "auth_token");
 
@@ -215,7 +191,6 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
 export async function loginInstagram(credentials: LoginCredentials): Promise<{ success: boolean; error?: string }> {
   ensureSessionsDir();
 
-  // If sessionid cookie provided directly:
   if (credentials.cookieSessionId?.trim()) {
     const cookies = [
       {
@@ -258,7 +233,6 @@ export async function loginInstagram(credentials: LoginCredentials): Promise<{ s
     await page.goto("https://www.instagram.com/accounts/login/", { waitUntil: "domcontentloaded", timeout: 25000 });
     await page.waitForTimeout(3000);
 
-    // Accept cookies popup if present
     try {
       const acceptBtn = page.locator('button:has-text("Allow all cookies"), button:has-text("Permitir todas las cookies"), button:has-text("De acuerdo"), button:has-text("Accept All")').first();
       if (await acceptBtn.isVisible()) await acceptBtn.click();
