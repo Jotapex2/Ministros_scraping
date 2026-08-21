@@ -11,7 +11,6 @@ RUN npm ci
 # Etapa 2: Builder (Playwright + Next.js build)
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
@@ -19,19 +18,21 @@ ENV NODE_ENV=production
 # Instalar Chromium y dependencias de sistema operativo para Playwright
 RUN npx playwright install --with-deps chromium
 
+# Copiar el código después de la capa pesada para conservar la caché de Chromium
+COPY . .
+
 # Compilar la aplicación Next.js
 RUN npm run build
 
-# Etapa 3: Runner (Producción)
-FROM base AS runner
+# Etapa 3: Runner (Producción) — imagen slim para reducir tamaño
+FROM node:20-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Playwright necesita estas librerías del sistema operativo en la imagen final.
-# Se instalan directamente con apt-get para no depender de BuildKit mounts.
+# Dependencias de sistema mínimas para Chromium headless
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnspr4 \
     libnss3 \
@@ -52,8 +53,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxshmfence1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar navegadores de Playwright instalados
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+# Copiar solo el headless shell de Playwright (el chromium completo no se usa en headless:true)
+COPY --from=builder /root/.cache/ms-playwright/chromium_headless_shell-1234 /root/.cache/ms-playwright/chromium_headless_shell-1234
 
 # Copiar archivos compilados y dependencias de la aplicación
 COPY --from=builder /app/.next/standalone ./

@@ -10,6 +10,7 @@ import { aggregateTopics, emptySession, finalizeSession } from "./session";
 import { saveSession } from "@/lib/session/storage";
 import { getCachedSentiments, setCachedSentiments } from "@/lib/session/sentiment-cache";
 import { pAll } from "@/lib/utils/p-all";
+import { uniqueSourceAccounts } from "@/lib/social/accounts";
 
 async function api(path: string, body: unknown, signal?: AbortSignal) {
   let lastError: unknown;
@@ -55,6 +56,9 @@ async function requestSentimentWithFallback(
       {
         action: "sentiment",
         items: items.map((item) => ({ id: item.id, text: item.text })),
+        llmProvider: config.llmProvider,
+        ollamaHost: config.ollamaHost,
+        ollamaModel: config.ollamaModel,
       },
       signal,
     )) as SentimentResult[];
@@ -118,7 +122,10 @@ export async function runAnalysis(
   onUpdate: (session: AnalysisSession) => void,
 ) {
   const session = emptySession(config);
-  const llmLabel = "DeepSeek";
+  const llmLabel =
+    (config.llmProvider || "ollama") === "ollama"
+      ? `Ollama (${config.ollamaModel || "gemma3:1b"})`
+      : "DeepSeek";
   onUpdate({ ...session });
   try {
     if (!config.platforms.length)
@@ -142,7 +149,7 @@ export async function runAnalysis(
 
     const active = config.accounts.filter((account) => account.active);
     if (config.platforms.includes("x")) {
-      const accounts = active.filter((account) => account.xUsername);
+      const accounts = uniqueSourceAccounts(active, "x");
       session.quality.x.requested = accounts.length;
 
       interface XAccountResult {
@@ -365,6 +372,12 @@ export async function runAnalysis(
           throw new Error(`Detención por sesión requerida: ${authErr}`);
         }
 
+        if (!result.posts.length && !result.errors.length) {
+          const message = `X · ${account.name}: no se encontraron publicaciones visibles en el período solicitado.`;
+          result.errors.push(message);
+          session.errors.push(message);
+        }
+
         session.quality.x.succeeded++;
         session.quality.x.posts += result.posts.length;
         session.quality.x.errors += result.errors.length ? 1 : 0;
@@ -417,7 +430,7 @@ export async function runAnalysis(
       await checkpoint(session, "Publicaciones de X disponibles", onUpdate);
     }
     if (config.platforms.includes("instagram")) {
-      const accounts = active.filter((account) => account.instagramUsername);
+      const accounts = uniqueSourceAccounts(active, "instagram");
       session.quality.instagram.requested = accounts.length;
       const startsAt = new Date(`${config.startDate}T00:00:00`).getTime();
       const endsAt = new Date(`${config.endDate}T23:59:59`).getTime();
@@ -583,10 +596,11 @@ export async function runAnalysis(
     const sentimentByItemId = new Map(
       session.sentiments.map((s) => [s.itemId, s.sentiment]),
     );
-    for (const batch of chunks(
-      selected,
-      Math.min(50, config.limits.deepseekBatchSize),
-    )) {
+    const topicBatchSize =
+      (config.llmProvider || "ollama") === "ollama"
+        ? 8
+        : Math.min(50, config.limits.deepseekBatchSize);
+    for (const batch of chunks(selected, topicBatchSize)) {
       try {
         const result = (await api(
           "/api/deepseek",
@@ -598,6 +612,9 @@ export async function runAnalysis(
               sentiment: sentimentByItemId.get(item.id),
             })),
             existing: [...catalog],
+            llmProvider: config.llmProvider,
+            ollamaHost: config.ollamaHost,
+            ollamaModel: config.ollamaModel,
           },
           signal,
         )) as { assignments: typeof assignments };

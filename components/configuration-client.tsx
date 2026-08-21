@@ -9,6 +9,7 @@ import { accountRows, downloadCsv, parseAccountCsv } from "@/lib/export/csv";
 import { defaultAccounts } from "@/config/accounts";
 import { clearAccounts } from "@/lib/session/accounts";
 import { ScraperLoginModal } from "./scraper-login-modal";
+import { OllamaModelField } from "./ollama-model-field";
 
 export function ConfigurationClient() {
   const { config, hydrated, hydrate, setConfig, setAccounts } =
@@ -17,6 +18,12 @@ export function ConfigurationClient() {
   const [authStatus, setAuthStatus] = useState<{ x?: boolean; instagram?: boolean }>({});
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginPlatform, setLoginPlatform] = useState<"x" | "instagram">("x");
+  const [ollamaTesting, setOllamaTesting] = useState(false);
+  const [ollamaResult, setOllamaResult] = useState<{
+    success: boolean;
+    models?: string[];
+    error?: string;
+  } | null>(null);
   const file = useRef<HTMLInputElement>(null);
 
   const checkAuth = async () => {
@@ -30,6 +37,38 @@ export function ConfigurationClient() {
         });
       }
     } catch {}
+  };
+
+  const testOllama = async () => {
+    setOllamaTesting(true);
+    setOllamaResult(null);
+    try {
+      const response = await fetch("/api/deepseek", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "test_ollama",
+          ollamaHost: config.ollamaHost,
+          refresh: true,
+        }),
+      });
+      const result = await response.json();
+      if (response.ok && result.ok) {
+        setOllamaResult({ success: true, models: result.data?.models ?? [] });
+      } else {
+        setOllamaResult({
+          success: false,
+          error: result.error || "No se pudo conectar a Ollama.",
+        });
+      }
+    } catch (error) {
+      setOllamaResult({
+        success: false,
+        error: error instanceof Error ? error.message : "Error de conexión.",
+      });
+    } finally {
+      setOllamaTesting(false);
+    }
   };
 
   useEffect(() => {
@@ -348,9 +387,62 @@ export function ConfigurationClient() {
               <div>
                 <h3 className="font-bold text-sm">Proveedor de Inteligencia Artificial (LLM)</h3>
                 <p className="kpi-meta">
-                  Análisis cualitativo de sentimiento y detección de temas mediante DeepSeek.
+                  Clasificación local y reproducible de sentimiento y temas.
                 </p>
               </div>
+              <div className="field">
+                <label>Proveedor</label>
+                <Select
+                  value={config.llmProvider || "ollama"}
+                  onChange={(event) =>
+                    setConfig({
+                      llmProvider: event.target.value as "deepseek" | "ollama",
+                    })
+                  }
+                >
+                  <option value="ollama">Ollama local</option>
+                  <option value="deepseek">DeepSeek API</option>
+                </Select>
+              </div>
+              {(config.llmProvider || "ollama") === "ollama" && (
+                <>
+                  <div className="field">
+                    <label>Host de Ollama</label>
+                    <Input
+                      value={config.ollamaHost || "http://127.0.0.1:11434"}
+                      onChange={(event) =>
+                        setConfig({ ollamaHost: event.target.value })
+                      }
+                    />
+                    <p className="kpi-meta">
+                      En Docker se resuelve mediante host.docker.internal.
+                    </p>
+                  </div>
+                  <div className="field">
+                    <label>Modelo</label>
+                    <OllamaModelField
+                      host={config.ollamaHost}
+                      value={config.ollamaModel || "gemma3:1b"}
+                      onChange={(ollamaModel) => setConfig({ ollamaModel })}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={testOllama}
+                    disabled={ollamaTesting}
+                  >
+                    {ollamaTesting ? "Conectando…" : "Probar Ollama"}
+                  </Button>
+                  {ollamaResult && (
+                    <p className="kpi-meta">
+                      {ollamaResult.success
+                        ? `Conexión correcta. Modelos: ${ollamaResult.models?.join(", ") || "ninguno"}.`
+                        : ollamaResult.error}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           </Card>
         </div>

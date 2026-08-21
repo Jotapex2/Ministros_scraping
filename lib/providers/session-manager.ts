@@ -6,6 +6,22 @@ import { browserPool, type PooledContext } from "./browser-pool";
 const SESSIONS_DIR = path.join(process.cwd(), ".sessions");
 const X_SESSION_PATH = path.join(SESSIONS_DIR, "x_session.json");
 const IG_SESSION_PATH = path.join(SESSIONS_DIR, "instagram_session.json");
+const X_INVALID_PATH = path.join(SESSIONS_DIR, "x_session.invalid");
+const IG_INVALID_PATH = path.join(SESSIONS_DIR, "instagram_session.invalid");
+const invalidSessions = new Set<"x" | "instagram">();
+
+export function markScraperSessionInvalid(platform: "x" | "instagram") {
+  invalidSessions.add(platform);
+  ensureSessionsDir();
+  const marker = platform === "x" ? X_INVALID_PATH : IG_INVALID_PATH;
+  fs.writeFileSync(marker, new Date().toISOString());
+}
+
+function clearInvalidSession(platform: "x" | "instagram") {
+  invalidSessions.delete(platform);
+  const marker = platform === "x" ? X_INVALID_PATH : IG_INVALID_PATH;
+  fs.rmSync(marker, { force: true });
+}
 
 function ensureSessionsDir() {
   if (!fs.existsSync(SESSIONS_DIR)) {
@@ -27,8 +43,14 @@ export interface LoginCredentials {
 
 export async function getSessionStatus(): Promise<SessionStatus> {
   ensureSessionsDir();
-  let hasX = fs.existsSync(X_SESSION_PATH);
-  let hasIg = fs.existsSync(IG_SESSION_PATH);
+  let hasX =
+    fs.existsSync(X_SESSION_PATH) &&
+    !fs.existsSync(X_INVALID_PATH) &&
+    !invalidSessions.has("x");
+  let hasIg =
+    fs.existsSync(IG_SESSION_PATH) &&
+    !fs.existsSync(IG_INVALID_PATH) &&
+    !invalidSessions.has("instagram");
 
   let xUser: string | undefined;
   let igUser: string | undefined;
@@ -75,10 +97,12 @@ export async function getSessionStatus(): Promise<SessionStatus> {
 
 export async function getScraperContext(
   platform: "x" | "instagram",
+  anonymous = false,
 ): Promise<PooledContext> {
   ensureSessionsDir();
   const sessionPath = platform === "x" ? X_SESSION_PATH : IG_SESSION_PATH;
-  const storageState = fs.existsSync(sessionPath) ? sessionPath : undefined;
+  const storageState =
+    !anonymous && fs.existsSync(sessionPath) ? sessionPath : undefined;
   return browserPool.getPooledContext(storageState);
 }
 
@@ -109,6 +133,7 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
     ];
     const storageState = { cookies, origins: [] };
     fs.writeFileSync(X_SESSION_PATH, JSON.stringify(storageState, null, 2));
+    clearInvalidSession("x");
     return { success: true };
   }
 
@@ -177,6 +202,7 @@ export async function loginX(credentials: LoginCredentials): Promise<{ success: 
     }
 
     await context.storageState({ path: X_SESSION_PATH });
+    clearInvalidSession("x");
     await browser.close();
     return { success: true };
   } catch (error) {
@@ -205,6 +231,7 @@ export async function loginInstagram(credentials: LoginCredentials): Promise<{ s
     ];
     const storageState = { cookies, origins: [] };
     fs.writeFileSync(IG_SESSION_PATH, JSON.stringify(storageState, null, 2));
+    clearInvalidSession("instagram");
     return { success: true };
   }
 
@@ -269,6 +296,7 @@ export async function loginInstagram(credentials: LoginCredentials): Promise<{ s
     }
 
     await context.storageState({ path: IG_SESSION_PATH });
+    clearInvalidSession("instagram");
     await browser.close();
     return { success: true };
   } catch (error) {

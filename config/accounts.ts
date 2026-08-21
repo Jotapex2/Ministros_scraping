@@ -8,6 +8,7 @@ interface MinisterAccountSeed {
   instagramUsername: string;
   xUsername: string;
   extraAliases?: string[];
+  proxyAccount?: boolean;
 }
 
 const ministers: MinisterAccountSeed[] = [
@@ -21,6 +22,7 @@ const ministers: MinisterAccountSeed[] = [
   },
   {
     name: "Francisco Pérez Mackenna",
+    fullName: "José Francisco Pérez Mackenna",
     position: "Ministro de Relaciones Exteriores",
     ministry: "Relaciones Exteriores",
     instagramUsername: "ministroperezmackenna",
@@ -33,6 +35,7 @@ const ministers: MinisterAccountSeed[] = [
     ministry: "Defensa Nacional",
     instagramUsername: "ministrobarros",
     xUsername: "mindefchile",
+    proxyAccount: true,
   },
   {
     name: "Jorge Quiroz",
@@ -60,8 +63,8 @@ const ministers: MinisterAccountSeed[] = [
   {
     name: "Daniel Mas",
     fullName: "Daniel Mas Valdés",
-    position: "Ministro de Economía y Minería (Biministro)",
-    ministry: "Economía y Minería",
+    position: "Ministro de Economía, Fomento y Turismo y Minería (Biministro)",
+    ministry: "Economía, Fomento y Turismo y Minería",
     instagramUsername: "danielmasvaldes",
     xUsername: "DanielMasValdes",
   },
@@ -88,6 +91,7 @@ const ministers: MinisterAccountSeed[] = [
     ministry: "Justicia y Derechos Humanos",
     instagramUsername: "ministrorabat",
     xUsername: "MinjuDDHH",
+    proxyAccount: true,
   },
   {
     name: "Tomás Rau",
@@ -100,8 +104,8 @@ const ministers: MinisterAccountSeed[] = [
   {
     name: "Louis de Grange",
     fullName: "Louis de Grange Concha",
-    position: "Ministro de Obras Públicas y Transportes (Biministro)",
-    ministry: "Obras Públicas y Transportes",
+    position: "Ministro de Transportes y Telecomunicaciones y Obras Públicas (Biministro)",
+    ministry: "Transportes y Telecomunicaciones y Obras Públicas",
     instagramUsername: "ministrodegrange",
     xUsername: "louisdegrange",
   },
@@ -155,24 +159,26 @@ const ministers: MinisterAccountSeed[] = [
   },
   {
     name: "Francisco Riveros",
+    fullName: "Francisco Leonel Riveros Cantuarias",
     position: "Ministro del Deporte",
     ministry: "Deporte",
     instagramUsername: "mindepchile",
     xUsername: "MindepChile",
+    proxyAccount: true,
   },
   {
     name: "Judith Marín",
     fullName: "Judith Marín Morales",
-    position: "Ministra de la Mujer y Equidad de Género",
-    ministry: "Mujer y Equidad de Género",
+    position: "Ministra de la Mujer y la Equidad de Género",
+    ministry: "Mujer y la Equidad de Género",
     instagramUsername: "judithmarinm",
     xUsername: "MarinJudithM",
   },
   {
     name: "Francisco Undurraga",
     fullName: "Francisco Undurraga Gazitúa",
-    position: "Ministro de las Culturas, Artes y Patrimonio",
-    ministry: "Culturas, Artes y Patrimonio",
+    position: "Ministro de las Culturas, las Artes y el Patrimonio",
+    ministry: "Culturas, las Artes y el Patrimonio",
     instagramUsername: "undurragapancho",
     xUsername: "Min_Undurraga",
     extraAliases: ["@Panchoundurraga"],
@@ -180,8 +186,8 @@ const ministers: MinisterAccountSeed[] = [
   {
     name: "Ximena Lincolao",
     fullName: "Ximena Lincolao Pilquián",
-    position: "Ministra de Ciencia, Tecnología e Innovación",
-    ministry: "Ciencia, Tecnología e Innovación",
+    position: "Ministra de Ciencia, Tecnología, Conocimiento e Innovación",
+    ministry: "Ciencia, Tecnología, Conocimiento e Innovación",
     instagramUsername: "ximenalincolao",
     xUsername: "MinLincolao",
   },
@@ -202,6 +208,7 @@ const ministerAccounts: AccountConfig[] = ministers.map((minister) => ({
   ministry: minister.ministry,
   instagramUsername: minister.instagramUsername,
   xUsername: minister.xUsername,
+  proxyAccount: minister.proxyAccount,
   accountType: "minister",
   aliases: [
     minister.name,

@@ -151,7 +151,20 @@ export function normalizeProfile(
 
 export function deduplicatePosts(posts: SocialPost[]) {
   const map = new Map<string, SocialPost>();
-  for (const post of posts)
-    map.set(`${post.platform}:${post.id || post.url}`, post);
+  for (const post of posts) {
+    const key = `${post.platform}:${post.id || post.url}`;
+    const existing = map.get(key);
+    if (!existing || postAttributionScore(post) > postAttributionScore(existing)) {
+      map.set(key, post);
+    }
+  }
   return [...map.values()];
+}
+
+function postAttributionScore(post: SocialPost) {
+  return (
+    (post.ministerId ? 4 : 0) +
+    (post.accountId ? 2 : 0) +
+    (post.authorType !== "public" ? 1 : 0)
+  );
 }

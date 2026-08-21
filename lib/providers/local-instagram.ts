@@ -1,4 +1,7 @@
-import { getScraperContext } from "./session-manager";
+import {
+  getScraperContext,
+  markScraperSessionInvalid,
+} from "./session-manager";
 
 export interface LocalInstagramPost {
   id: string;
@@ -42,16 +45,101 @@ async function settlePendingSafely(
   if (timeout) clearTimeout(timeout);
 }
 
-function checkInstagramSession(page: any) {
+async function checkInstagramSession(page: any) {
   const url = page.url();
+  const loginFormVisible = await page
+    .locator('input[name="username"], input[name="password"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  const loginPromptVisible = await page
+    .locator(
+      'form[action*="/accounts/login"], button:has-text("Log in"), button:has-text("Iniciar sesión")',
+    )
+    .first()
+    .isVisible()
+    .catch(() => false);
+  const bodyText = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
   if (
     url.includes("/accounts/login") ||
     url.includes("/challenge/") ||
-    url.includes("/accounts/suspended")
+    url.includes("/accounts/suspended") ||
+    loginFormVisible ||
+    loginPromptVisible ||
+    /Log into Instagram|Inicia sesi[oó]n en Instagram/i.test(bodyText)
   ) {
+    markScraperSessionInvalid("instagram");
     throw new Error(
       "La sesión de Instagram expiró o requiere verificación. Vuelve a autenticar Instagram.",
     );
+  }
+}
+
+function compactNumber(value: string): number | undefined {
+  const match = value.trim().match(/([\d.,]+)\s*([KM])?/i);
+  if (!match) return undefined;
+  const suffix = match[2]?.toUpperCase();
+  const numericText = suffix
+    ? match[1].replace(",", ".")
+    : match[1].replace(/[.,]/g, "");
+  const parsed = Number(numericText);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.round(parsed * (suffix === "K" ? 1_000 : suffix === "M" ? 1_000_000 : 1));
+}
+
+async function scrapeVisiblePostPage(
+  context: any,
+  url: string,
+  username: string,
+  followersCount?: number,
+): Promise<LocalInstagramPost | null> {
+  const page = await context.newPage();
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await page.waitForTimeout(1200);
+    await checkInstagramSession(page);
+
+    const createdAt = await page
+      .locator("time[datetime]")
+      .first()
+      .getAttribute("datetime")
+      .catch(() => null);
+    if (!createdAt) return null;
+
+    const description =
+      (await page
+        .locator('meta[property="og:description"]')
+        .getAttribute("content")
+        .catch(() => null)) ?? "";
+    const postPath = new URL(page.url()).pathname;
+    const pathMatch = postPath.match(/\/(?:p|reel)\/([^/]+)/);
+    if (!pathMatch) return null;
+    const shortCode = pathMatch[1];
+    const likes = description.match(/([\d.,]+\s*[KM]?)\s+likes?/i)?.[1];
+    const comments = description.match(/([\d.,]+\s*[KM]?)\s+comments?/i)?.[1];
+    const quotedCaption = description.match(/:\s*[“"]([\s\S]*?)[”"]\s*$/)?.[1];
+    const articleText = await page
+      .locator("article")
+      .first()
+      .innerText()
+      .catch(() => "");
+
+    return {
+      id: shortCode,
+      shortCode,
+      caption: quotedCaption ?? articleText.split("\n").slice(0, 8).join(" "),
+      createdAt: new Date(createdAt).toISOString(),
+      ownerUsername: username,
+      ownerFollowers: followersCount,
+      likeCount: likes ? compactNumber(likes) : undefined,
+      commentCount: comments ? compactNumber(comments) : undefined,
+      url: `https://www.instagram.com${postPath}`,
+    };
+  } finally {
+    await page.close().catch(() => undefined);
   }
 }
 
@@ -231,6 +319,7 @@ async function scrapeAccount(
     try {
       const page = await pooled.context.newPage();
       const posts = new Map<string, LocalInstagramPost>();
+      const visiblePostUrls = new Map<string, string>();
       const pendingResponses = new Set<Promise<void>>();
       let profile: LocalInstagramProfile = { username: cleanUser };
       let resolveInitial: (() => void) | null = null;
@@ -264,8 +353,6 @@ async function scrapeAccount(
         ) {
           const task = (async () => {
             try {
-              const contentType = response.headers()["content-type"] ?? "";
-              if (!contentType.includes("json")) return;
               collect(await response.json());
               if (resolveInitial) resolveInitial();
             } catch {}
@@ -274,6 +361,26 @@ async function scrapeAccount(
           void task.finally(() => pendingResponses.delete(task));
         }
       });
+
+      const collectVisiblePostUrls = async () => {
+        const hrefs = (await page
+          .locator('a[href*="/p/"], a[href*="/reel/"]')
+          .evaluateAll((links: Element[]) =>
+            links
+              .map((link) => link.getAttribute("href"))
+              .filter((href): href is string => !!href),
+          )
+          .catch(() => [])) as string[];
+        for (const href of hrefs) {
+          const match = href.match(/\/(?:p|reel)\/([^/]+)/);
+          if (match) {
+            visiblePostUrls.set(
+              match[1],
+              new URL(href, "https://www.instagram.com").href,
+            );
+          }
+        }
+      };
 
       await page.goto(`https://www.instagram.com/${cleanUser}/`, {
         waitUntil: "domcontentloaded",
@@ -285,22 +392,8 @@ async function scrapeAccount(
         setTimeout(resolve, 3500);
       });
 
-      checkInstagramSession(page);
-
-      const webProfile = await page
-        .evaluate(async (profileUsername) => {
-          const response = await fetch(
-            `/api/v1/users/web_profile_info/?username=${encodeURIComponent(profileUsername)}`,
-            {
-              credentials: "include",
-              headers: { "x-ig-app-id": "936619743392459" },
-            },
-          );
-          if (!response.ok) return null;
-          return response.json();
-        }, cleanUser)
-        .catch(() => null);
-      if (webProfile) collect(webProfile);
+      await checkInstagramSession(page);
+      await collectVisiblePostUrls();
 
       const embedded = await page
         .locator('script[type="application/json"]')
@@ -330,6 +423,7 @@ async function scrapeAccount(
         await page.evaluate(() => window.scrollBy(0, 1600));
         await page.waitForTimeout(1600);
         await settlePendingSafely(pendingResponses);
+        await collectVisiblePostUrls();
 
         stagnantScrolls = posts.size > previousCount ? 0 : stagnantScrolls + 1;
         previousCount = posts.size;
@@ -355,6 +449,25 @@ async function scrapeAccount(
 
       await page.waitForTimeout(500);
       await settlePendingSafely(pendingResponses);
+
+      if (posts.size === 0 && visiblePostUrls.size > 0) {
+        for (const [shortCode, url] of [...visiblePostUrls].slice(0, limit)) {
+          const post = await scrapeVisiblePostPage(
+            pooled.context,
+            url,
+            cleanUser,
+            profile.followersCount,
+          );
+          if (!post) continue;
+          posts.set(shortCode, post);
+          if (
+            sinceTime != null &&
+            new Date(post.createdAt).getTime() <= sinceTime
+          ) {
+            break;
+          }
+        }
+      }
       const sortedPosts = [...posts.values()]
         .map((post) => ({
           ...post,

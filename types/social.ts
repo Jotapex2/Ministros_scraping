@@ -18,6 +18,8 @@ export interface AccountConfig {
   instagramUsername: string;
   aliases: string[];
   active: boolean;
+  /** The minister record intentionally uses an institutional profile as proxy. */
+  proxyAccount?: boolean;
 }
 
 export interface SocialProfileSnapshot {

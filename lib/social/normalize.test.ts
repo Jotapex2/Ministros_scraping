@@ -43,6 +43,22 @@ describe("social normalization", () => {
     expect(deduplicatePosts([item, item])).toHaveLength(1);
   });
 
+  it("keeps the account-attributed copy over a public search duplicate", () => {
+    const publicCopy = normalizePost(
+      { id: "2", text: "Hola", createdAt: "2026-08-01T12:00:00Z", username: "cuenta" },
+      "x",
+    )!;
+    const accountCopy = normalizePost(
+      { id: "2", text: "Hola", createdAt: "2026-08-01T12:00:00Z", username: "cuenta" },
+      "x",
+      account,
+    )!;
+    const result = deduplicatePosts([accountCopy, publicCopy]);
+    expect(result).toHaveLength(1);
+    expect(result[0].accountId).toBe(account.id);
+    expect(result[0].ministerId).toBe(account.id);
+  });
+
   it("normalizes profile followers from X and Instagram scraper fields", () => {
     expect(
       normalizeProfile(

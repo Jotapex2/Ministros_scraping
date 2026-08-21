@@ -101,7 +101,10 @@ export async function getPooledContext(
       browser,
       context,
       release: () => {
-        releaseBrowser(browser);
+        void context
+          .close()
+          .catch(() => undefined)
+          .finally(() => releaseBrowser(browser));
       },
     };
   } catch (error) {

@@ -660,7 +660,8 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
       <Page size="A4" style={styles.page}>
         <Text style={styles.section}>Detalle de actividad ministerial</Text>
         <Text style={styles.sectionSubtitle}>
-          Publicaciones e interacción de todos los ministros observados.
+          Publicaciones e interacción de todos los ministros observados; cuando
+          no existe una cuenta personal, se utiliza la cuenta proxy configurada.
         </Text>
         <Table
           headers={[
@@ -851,7 +852,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           compact
         />
         <Text style={styles.note}>
-          Clasificación automatizada mediante DeepSeek; puede contener errores de interpretación.
+          Clasificación automatizada mediante el LLM configurado; puede contener errores de interpretación.
         </Text>
         <Footer />
       </Page>
@@ -921,6 +922,12 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           eliminan por plataforma e identificador.
         </Text>
         <Text style={styles.bullet}>
+          Algunas autoridades se observan mediante una cuenta institucional
+          proxy cuando no existe una cuenta personal verificable; esas piezas
+          deben interpretarse como actividad de la cartera, no como actividad
+          personal.
+        </Text>
+        <Text style={styles.bullet}>
           Engagement principal = likes + comentarios. Engagement ampliado agrega
           shares, reposts y quotes cuando están disponibles.
         </Text>
@@ -934,7 +941,7 @@ export function AnalysisReport({ session }: { session: AnalysisSession }) {
           y políticas públicas.
         </Text>
         <Text style={styles.bullet}>
-          Sentimiento y temas se clasifican mediante DeepSeek; los volúmenes y rankings se calculan en código.
+          Sentimiento y temas se clasifican mediante el LLM configurado; los volúmenes y rankings se calculan en código.
         </Text>
         <Text style={styles.note}>
           Extracción: {session.createdAt}. Plataformas:{" "}

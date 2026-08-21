@@ -1,4 +1,7 @@
-import { getScraperContext } from "./session-manager";
+import {
+  getScraperContext,
+  markScraperSessionInvalid,
+} from "./session-manager";
 
 export interface LocalXTweet {
   id: string;
@@ -16,6 +19,7 @@ export interface LocalXTweet {
   views?: number;
   url?: string;
   inReplyToId?: string;
+  source?: "api" | "dom";
 }
 
 type AnyObject = Record<string, unknown>;
@@ -33,36 +37,6 @@ async function settlePendingSafely(
     }),
   ]);
   if (timeout) clearTimeout(timeout);
-}
-
-async function publicXProfile(username: string) {
-  try {
-    const response = await fetch(
-      `https://api.vxtwitter.com/${encodeURIComponent(username)}`,
-      {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(8000),
-        cache: "no-store",
-      },
-    );
-    if (!response.ok) return null;
-    const raw = (await response.json()) as AnyObject;
-    const followersCount = Number(raw.followers_count);
-    if (!Number.isFinite(followersCount)) return null;
-    return {
-      username: String(raw.screen_name ?? username),
-      name: String(raw.name ?? username),
-      followersCount,
-      description:
-        typeof raw.description === "string" ? raw.description : undefined,
-      profileImageUrl:
-        typeof raw.profile_image_url === "string"
-          ? raw.profile_image_url
-          : undefined,
-    };
-  } catch {
-    return null;
-  }
 }
 
 function parseCompactCount(value: string): number | undefined {
@@ -84,7 +58,12 @@ function parseCompactCount(value: string): number | undefined {
     );
     if (!Number.isFinite(decimal)) return undefined;
     return Math.round(
-      decimal * (suffix === "mil" || suffix === "k" ? 1_000 : 1_000_000),
+      decimal *
+        (suffix === "mil" || suffix === "k"
+          ? 1_000
+          : suffix === "b"
+            ? 1_000_000_000
+            : 1_000_000),
     );
   }
 
@@ -92,9 +71,161 @@ function parseCompactCount(value: string): number | undefined {
   return Number.isFinite(integer) ? integer : undefined;
 }
 
-function checkXSession(page: any) {
+export function isXTimelineResponse(url: string) {
+  return /\/(?:UserTweets(?:AndReplies)?|UserOriginalsTimeline|UserByScreenName|TweetDetail)(?:\?|$)/i.test(
+    url,
+  );
+}
+
+export function addXDateRange(
+  query: string,
+  sinceTime: number,
+  untilTime: number,
+) {
+  const parts = [query.trim()];
+  if (!/(?:^|\s)since:/i.test(query)) {
+    parts.push(
+      `since:${new Date(sinceTime * 1000).toISOString().slice(0, 10)}`,
+    );
+  }
+  if (!/(?:^|\s)until:/i.test(query)) {
+    parts.push(
+      `until:${new Date(untilTime * 1000 + 1000).toISOString().slice(0, 10)}`,
+    );
+  }
+  return parts.join(" ");
+}
+
+async function collectVisibleTweets(
+  page: any,
+  tweets: LocalXTweet[],
+  fallbackUsername?: string,
+) {
+  const locator = page.locator(
+    'article[data-testid="tweet"], article[itemtype*="SocialMediaPosting"], article[data-tweet-id]',
+  );
+  await locator
+    .first()
+    .waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => undefined);
+  const visible = (await locator.evaluateAll((articles: Element[]) =>
+      articles.map((article) => {
+        const metaContent = (itemprop: string, scope: Element = article) =>
+          scope.querySelector(`meta[itemprop="${itemprop}"]`)?.getAttribute("content") ??
+          "";
+        const namedMetric = (name: string) => {
+          const metas = [...article.querySelectorAll("meta")];
+          const nameIndex = metas.findIndex(
+            (meta) =>
+              meta.getAttribute("itemprop") === "name" &&
+              meta.getAttribute("content")?.toLowerCase() === name.toLowerCase(),
+          );
+          if (nameIndex < 0) return "";
+          return metas
+            .slice(nameIndex + 1)
+            .find((meta) => meta.getAttribute("itemprop") === "userInteractionCount")
+            ?.getAttribute("content") ?? "";
+        };
+
+        const time = article.querySelector("time");
+        const statusAnchor = time?.closest("a") as HTMLAnchorElement | null;
+        const href =
+          statusAnchor?.getAttribute("href") ?? metaContent("url");
+        const match = href.match(/(?:https?:\/\/[^/]+)?\/([^/]+)\/status\/(\d+)/);
+        const id =
+          match?.[2] ?? article.getAttribute("data-tweet-id") ?? "";
+        const createdAt =
+          time?.getAttribute("datetime") ??
+          metaContent("datePublished") ??
+          metaContent("dateCreated");
+        if (!id || !createdAt) return null;
+
+        const metric = (selector: string) => {
+          const element = article.querySelector(selector);
+          return (
+            element?.getAttribute("aria-label") ??
+            element?.textContent ??
+            ""
+          );
+        };
+        const userName =
+          match?.[1] ??
+          article.querySelector('[itemprop="alternateName"]')?.getAttribute("content") ??
+          "";
+        const userBlock = article.querySelector('[data-testid="User-Name"]');
+        const name =
+          userBlock?.querySelector("span")?.textContent?.trim() ??
+          article.querySelector('[itemprop="author"] [itemprop="name"]')?.getAttribute("content") ??
+          article.querySelector('[itemprop="author"] [itemprop="name"]')?.textContent?.trim();
+        return {
+          id,
+          text:
+            article
+              .querySelector('[data-testid="tweetText"]')
+              ?.textContent?.trim() ??
+            metaContent("text"),
+          createdAt,
+          userName,
+          name: name || userName,
+          url: href.startsWith("http") ? href : `https://x.com${href}`,
+          reply:
+            metric('[data-testid="reply"]') ||
+            metaContent("commentCount") ||
+            namedMetric("Replies"),
+          retweet:
+            metric('[data-testid="retweet"]') || namedMetric("Retweets"),
+          like: metric('[data-testid="like"]') || namedMetric("Likes"),
+          views: metric('a[href$="/analytics"]') || namedMetric("Views"),
+        };
+      }),
+    )
+    .catch(() => [])) as Array<{
+    id: string;
+    text: string;
+    createdAt: string;
+    userName: string;
+    name: string;
+    url: string;
+    reply: string;
+    retweet: string;
+    like: string;
+    views: string;
+  } | null>;
+
+  for (const item of visible) {
+    if (!item) continue;
+    tweets.push({
+      id: item.id,
+      text: item.text,
+      createdAt: item.createdAt,
+      author: {
+        userName: item.userName || fallbackUsername || "desconocido",
+        name: item.name || item.userName || fallbackUsername || "desconocido",
+      },
+      replyCount: parseCompactCount(item.reply),
+      retweetCount: parseCompactCount(item.retweet),
+      likeCount: parseCompactCount(item.like),
+      views: parseCompactCount(item.views),
+      url: item.url,
+      source: "dom",
+    });
+  }
+}
+
+async function checkXSession(page: any) {
   const url = page.url();
-  if (url.includes("/login") || url.includes("/flow/login") || url.includes("/account/access")) {
+  const loginVisible = await page
+    .locator('input[name="text"], input[name="password"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (
+    url.includes("/login") ||
+    url.includes("/flow/login") ||
+    url.includes("/account/access") ||
+    loginVisible
+  ) {
+    markScraperSessionInvalid("x");
     throw new Error("La sesión de X (Twitter) expiró o requiere verificación. Por favor haz clic en 'Iniciar Sesión' e ingresa tu cookie auth_token actualizada.");
   }
 }
@@ -207,7 +338,29 @@ function extractTweet(
     views: Number.isFinite(views) ? views : undefined,
     url: `https://x.com/${userName || "i"}/status/${legacy.id_str}`,
     inReplyToId: legacy.in_reply_to_status_id_str as string | undefined,
+    source: "api",
   };
+}
+
+function mergeTweetVersions(first: LocalXTweet, second: LocalXTweet) {
+  const preferred =
+    first.source === "api" || second.source !== "api" ? first : second;
+  const fallback = preferred === first ? second : first;
+  return {
+    ...fallback,
+    ...preferred,
+    likeCount: preferred.likeCount ?? fallback.likeCount,
+    replyCount: preferred.replyCount ?? fallback.replyCount,
+    retweetCount: preferred.retweetCount ?? fallback.retweetCount,
+    quoteCount: preferred.quoteCount ?? fallback.quoteCount,
+    views: preferred.views ?? fallback.views,
+    source: preferred.source,
+  };
+}
+
+function mergeTweetIntoMap(map: Map<string, LocalXTweet>, tweet: LocalXTweet) {
+  const existing = map.get(tweet.id);
+  map.set(tweet.id, existing ? mergeTweetVersions(existing, tweet) : tweet);
 }
 
 function collectTweets(
@@ -235,10 +388,9 @@ function collectTweets(
 export const localX = {
   profile: async (username: string) => {
     const cleanUser = username.replace(/^@/, "").trim();
-    const publicProfile = await publicXProfile(cleanUser);
-    if (publicProfile) return publicProfile;
-
-    const pooled = await getScraperContext("x");
+    // X public content is collected anonymously to avoid account-level
+    // Viewer rate limits from making public timelines appear empty.
+    const pooled = await getScraperContext("x", true);
 
     try {
       const page = await pooled.context.newPage();
@@ -283,7 +435,7 @@ export const localX = {
         setTimeout(resolve, 3000);
       });
 
-      checkXSession(page);
+      await checkXSession(page);
       await settlePendingSafely(pendingProfileResponses);
 
       const resolvedProfile = capturedProfile as Record<string, unknown> | null;
@@ -336,7 +488,9 @@ export const localX = {
     sinceTime?: number,
   ) => {
     const cleanUser = username.replace(/^@/, "").trim();
-    const pooled = await getScraperContext("x");
+    // X public content is collected anonymously to avoid account-level
+    // Viewer rate limits from making public timelines appear empty.
+    const pooled = await getScraperContext("x", true);
 
     try {
       const page = await pooled.context.newPage();
@@ -345,7 +499,7 @@ export const localX = {
 
       page.on("response", (response: any) => {
         const url = response.url();
-        if (url.includes("/UserTweets") || url.includes("/UserByScreenName") || url.includes("TweetDetail")) {
+        if (isXTimelineResponse(url)) {
           const task = (async () => {
             try {
               const json = await response.json();
@@ -360,7 +514,8 @@ export const localX = {
       await page.goto(`https://x.com/${cleanUser}`, { waitUntil: "domcontentloaded", timeout: 30000 });
 
       await page.waitForTimeout(2500);
-      checkXSession(page);
+      await checkXSession(page);
+      await collectVisibleTweets(page, tweets, cleanUser);
 
       const maxScrolls = Math.min(40, Math.max(8, Math.ceil(limit / 10) + 4));
       let previousCount = 0;
@@ -369,6 +524,7 @@ export const localX = {
         await page.evaluate(() => window.scrollBy(0, 1500));
         await page.waitForTimeout(1800);
         await settlePendingSafely(pendingResponses);
+        await collectVisibleTweets(page, tweets, cleanUser);
 
         const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
         stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
@@ -390,10 +546,11 @@ export const localX = {
       }
       await page.waitForTimeout(750);
       await settlePendingSafely(pendingResponses);
+      await collectVisibleTweets(page, tweets, cleanUser);
 
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const t of tweets) {
-        uniqueMap.set(t.id, t);
+        mergeTweetIntoMap(uniqueMap, t);
       }
 
       pooled.release();
@@ -405,7 +562,9 @@ export const localX = {
   },
 
   replies: async (tweetId: string, _cursor?: string) => {
-    const pooled = await getScraperContext("x");
+    // X public content is collected anonymously to avoid account-level
+    // Viewer rate limits from making public timelines appear empty.
+    const pooled = await getScraperContext("x", true);
 
     try {
       const page = await pooled.context.newPage();
@@ -430,30 +589,35 @@ export const localX = {
         setTimeout(resolve, 3500);
       });
 
-      checkXSession(page);
+      await checkXSession(page);
+      await collectVisibleTweets(page, replies);
 
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const r of replies) {
         if (r.id === tweetId) continue;
         r.inReplyToId = r.inReplyToId ?? tweetId;
-        uniqueMap.set(r.id, r);
+        mergeTweetIntoMap(uniqueMap, r);
       }
 
       pooled.release();
       return { replies: Array.from(uniqueMap.values()), next_cursor: "" };
     } catch (error) {
       pooled.release();
-      return { replies: [], next_cursor: "" };
+      throw new Error(
+        `Error en scraper local de replies de X (${tweetId}): ${error instanceof Error ? error.message : "Error desconocido"}`,
+      );
     }
   },
 
   search: async (
     query: string,
-    _sinceTime: number,
-    _untilTime: number,
+    sinceTime: number,
+    untilTime: number,
     limit = 100,
   ) => {
-    const pooled = await getScraperContext("x");
+    // X public content is collected anonymously to avoid account-level
+    // Viewer rate limits from making public timelines appear empty.
+    const pooled = await getScraperContext("x", true);
 
     try {
       const page = await pooled.context.newPage();
@@ -474,11 +638,13 @@ export const localX = {
         }
       });
 
-      const searchUrl = `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
+      const datedQuery = addXDateRange(query, sinceTime, untilTime);
+      const searchUrl = `https://x.com/search?q=${encodeURIComponent(datedQuery)}&f=live`;
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
       await page.waitForTimeout(3000);
-      checkXSession(page);
+      await checkXSession(page);
+      await collectVisibleTweets(page, tweets);
 
       const maxScrolls = Math.min(20, Math.max(4, Math.ceil(limit / 10)));
       let previousCount = 0;
@@ -487,6 +653,7 @@ export const localX = {
         await page.evaluate(() => window.scrollBy(0, 1500));
         await page.waitForTimeout(1800);
         await settlePendingSafely(pendingResponses);
+        await collectVisibleTweets(page, tweets);
         const uniqueCount = new Set(tweets.map((tweet) => tweet.id)).size;
         stagnantScrolls = uniqueCount > previousCount ? 0 : stagnantScrolls + 1;
         previousCount = uniqueCount;
@@ -496,7 +663,11 @@ export const localX = {
 
       const uniqueMap = new Map<string, LocalXTweet>();
       for (const t of tweets) {
-        uniqueMap.set(t.id, t);
+        const createdAt = new Date(t.createdAt).getTime();
+        if (createdAt < sinceTime * 1000 || createdAt > untilTime * 1000) {
+          continue;
+        }
+        mergeTweetIntoMap(uniqueMap, t);
       }
 
       pooled.release();

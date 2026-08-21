@@ -10,20 +10,29 @@ export function mergeAccounts(
   fallback: AccountConfig[],
 ) {
   const defaultsById = new Map(fallback.map((account) => [account.id, account]));
+  const defaultsByName = new Map(
+    fallback.map((account) => [account.name.trim().toLowerCase(), account]),
+  );
   const migrated = stored.map((account) => {
-    const currentDefault = defaultsById.get(account.id);
+    const currentDefault =
+      defaultsById.get(account.id) ??
+      defaultsByName.get(account.name.trim().toLowerCase());
     if (!currentDefault) return account;
 
     return {
       ...currentDefault,
       ...account,
+      id: currentDefault.id,
       aliases: [
         ...new Set([...currentDefault.aliases, ...(account.aliases ?? [])]),
       ],
     };
   });
-  const storedIds = new Set(stored.map((account) => account.id));
-  return [...migrated, ...fallback.filter((account) => !storedIds.has(account.id))];
+  const storedIds = new Set(migrated.map((account) => account.id));
+  return [
+    ...migrated,
+    ...fallback.filter((account) => !storedIds.has(account.id)),
+  ];
 }
 
 export async function loadAccounts(fallback: AccountConfig[]) {

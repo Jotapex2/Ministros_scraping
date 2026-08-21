@@ -24,6 +24,9 @@ const defaultConfig = (): AnalysisConfig => ({
   queries: ["Gobierno de Chile"],
   limits,
   deepseekMode: "1000",
+  llmProvider: "ollama",
+  ollamaHost: "http://127.0.0.1:11434",
+  ollamaModel: "gemma3:1b",
   apifyInputTemplates: {},
 });
 interface State {
@@ -73,6 +76,9 @@ export const useObservatory = create<State>((set, get) => ({
     ]);
     const accounts = await loadAccounts(defaultAccounts);
     if (session) {
+      session.config.llmProvider ??= "ollama";
+      session.config.ollamaHost ??= "http://127.0.0.1:11434";
+      session.config.ollamaModel ??= "gemma3:1b";
       const byId = new Map(accounts.map((account) => [account.id, account]));
       session.config.accounts = accounts;
       session.metrics?.ministerRankings.forEach((metric) => {

@@ -18,6 +18,7 @@ import { generatePdf } from "./report/analysis-report";
 import type { AnalysisSession } from "@/types/analysis";
 import { ComparisonPanel } from "./comparison-panel";
 import { ScraperLoginModal } from "./scraper-login-modal";
+import { uniqueSourceCount } from "@/lib/social/accounts";
 export function HomeClient() {
   const {
     config,
@@ -108,7 +109,7 @@ export function HomeClient() {
         <div className="section-heading">
           <h2>Período de análisis</h2>
           <p>
-            {days} días · {config.accounts.filter((a) => a.active).length}{" "}
+            {days} días · {uniqueSourceCount(config.accounts, "x")}{" "}
             cuentas activas
           </p>
         </div>
@@ -199,16 +200,13 @@ export function HomeClient() {
             <div className="check-row">
               <strong>
                 {config.platforms.includes("x")
-                  ? config.accounts.filter((a) => a.active && a.xUsername)
-                      .length
+                  ? uniqueSourceCount(config.accounts, "x")
                   : 0}
               </strong>{" "}
               X ·{" "}
               <strong>
                 {config.platforms.includes("instagram")
-                  ? config.accounts.filter(
-                      (a) => a.active && a.instagramUsername,
-                    ).length
+                  ? uniqueSourceCount(config.accounts, "instagram")
                   : 0}
               </strong>{" "}
               IG
@@ -385,7 +383,7 @@ export function HomeClient() {
           <Card>
             <h3>Sentimiento y temas</h3>
             <p className="kpi-meta">
-              DeepSeek identifica el objeto evaluado y agrupa acontecimientos.
+              El LLM configurado identifica el objeto evaluado y agrupa acontecimientos.
               Los números se calculan en código; el modelo no calcula métricas.
             </p>
           </Card>
