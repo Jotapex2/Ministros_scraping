@@ -4,7 +4,7 @@ Aplicación web stateless para analizar, bajo demanda, actividad y conversación
 
 ## Características
 
-- Integración server-side con TwitterAPI.io, Apify y DeepSeek.
+- Integración con Scraping en playwright.
 - Datos normalizados, deduplicación, comentarios/replies y perfiles de seguidores.
 - Sentimiento dirigido al objeto evaluado, temas semánticos, menciones, Share of Voice y rankings.
 - Dashboard progresivo, explorador con filtros y calidad de datos por proveedor.
