@@ -21,6 +21,7 @@ El proyecto obtiene datos mediante Playwright, normaliza y deduplica publicacion
 - Ollama o DeepSeek para el análisis de texto.
 - Vitest para pruebas unitarias.
 - Docker y Docker Compose para ejecución contenerizada.
+*Nota: Ocupé Deepseek porque es bueno, bonito y barato para estas labores. Consideré pysentimiento pero, evalúa el general, no evalúa bien el sentimiento hacia una marca, keyword, o en este caso, un ministro.
 
 ## Requisitos
 
