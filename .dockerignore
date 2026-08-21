@@ -5,6 +5,15 @@ node_modules
 README.md
 Dockerfile
 docker-compose.yml
+.env
+.env.*
+!.env.example
+.sessions
+playwright/.auth
+**/cookies.json
+**/storage-state*.json
+**/*_session.json
+**/*.session.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

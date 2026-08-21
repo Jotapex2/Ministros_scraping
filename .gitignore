@@ -10,12 +10,17 @@ out/
 .vercel/
 
 # Environment files and secrets
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env.*.local
+.env
+.env.*
 !.env.example
+
+# Local browser authentication state (may contain live cookies)
+.sessions/
+playwright/.auth/
+**/cookies.json
+**/storage-state*.json
+**/*_session.json
+**/*.session.json
 
 # Test and coverage output
 coverage/
